@@ -1,0 +1,117 @@
+# Alien Museum – developer guide
+
+Mixed-reality alien museum for **Meta Quest 3S** (UE 5.7.4, Epic Native OpenXR + Meta XR plugin 1.205, MRUK).
+The player sees their real room through passthrough, places glass museum chambers on the floor or on
+furniture, and fills them with autonomous aliens chosen from a holographic collection.
+
+## Architecture
+
+```
+UAlienDataAsset (DA_Alien_*)          identity, look, behaviour tuning
+   └─ AAlienCharacter (BP_AlienCharacter)      body (procedural placeholder), movement, containment
+        └─ AAlienAIController                  state machine: Idle / Wander / LookAround / ReactToPlayer / Held
+             └─ CharacterMovementComponent     direct steering inside the chamber (no navmesh needed)
+
+AAlienChamber (BP_AlienChamber)
+   ├─ Base, FloorGlow, Glass, TopCap, LightPanel, FramePillars (1 instanced draw call)
+   ├─ ContainmentWalls (8 boxes) + Ceiling         block only the alien, never the pointer
+   ├─ ObstacleRock / ObstacleCrystal               things the alien walks around
+   ├─ MovementBounds, SpawnPoint, SelectVolume
+   ├─ InfoRoot (holographic info panel)
+   ├─ InteriorLight (optional real light, off by default)
+   └─ spatial anchor component (added at runtime by UMuseumPersistenceComponent)
+
+AMuseumDirector (BP_MuseumDirector, one per level)
+   ├─ UMuseumSceneComponent        passthrough, scene permission, MRUK room, surface raycasts, occluders
+   └─ UMuseumPersistenceComponent  save game + Meta spatial anchors
+AMuseumPawn (BP_MuseumPawn)       camera, controllers, 2 × UMuseumHandInteractor (controller / hand / desktop)
+AAlienCollectionPanel             3D holographic collection UI (cards, buttons)
+```
+
+Start-up flow: passthrough → spatial-data permission → MRUK loads the room (launches Space Setup if
+no room exists) → occluders built → saved chambers restored from anchors (or a starter chamber on first
+run) → Alien Collection panel appears in front of the player.
+
+## Files
+
+| Area | Files |
+|---|---|
+| Module | `Source/Ben10/Ben10.Build.cs`, `Source/Ben10.Target.cs`, `Source/Ben10Editor.Target.cs` |
+| Core | `Source/Ben10/Core/` – `MuseumDirector`, `MuseumGameMode`, `MuseumAssets`, `MuseumInteractable`, `MuseumTypes` |
+| Data | `Source/Ben10/Data/` – `AlienDataAsset`, `AlienCollectionAsset` |
+| Aliens | `Source/Ben10/Aliens/` – `AlienCharacter`, `AlienAIController`, `AlienAppearanceComponent` |
+| Chamber | `Source/Ben10/Chamber/AlienChamber` |
+| Mixed reality | `Source/Ben10/MR/` – `MuseumSceneComponent`, `MuseumPersistenceComponent`, `MuseumSaveGame` |
+| Interaction | `Source/Ben10/Interaction/` – `MuseumPawn`, `MuseumHandInteractor` |
+| UI | `Source/Ben10/UI/AlienCollectionPanel` |
+| Content | `Content/AlienMuseum/` – `Maps/L_AlienMuseum`, `Blueprints/BP_*`, `Data/DA_*`, `Materials/M_*` |
+
+## Build
+
+* **Editor build:** close the editor, then open the generated Visual Studio solution and build
+  `Development Editor | Win64`, or run:
+  `"C:\Program Files\Epic Games\UE_5.7\Engine\Build\BatchFiles\Build.bat" Ben10Editor Win64 Development -Project="C:\Games\Ben10\Ben10.uproject" -WaitMutex`
+* Generate the solution with right-click `Ben10.uproject` → *Generate Visual Studio project files*.
+* Header / UPROPERTY changes need an editor restart; body-only changes can use Live Coding (Ctrl+Alt+F11).
+
+## Test in the editor (no headset)
+
+Press **Play** in `L_AlienMuseum`. Without a headset the pawn runs in *desktop test mode* and the
+level's editor-only furniture (tag `MuseumEditorRoom`) stands in for your room.
+
+| Input | Action |
+|---|---|
+| Mouse | look |
+| W A S D | move |
+| Left mouse | select UI / place / click a chamber (info panel) / hold on a chamber to carry it |
+| Right mouse | grab / carry a chamber |
+| Z / C | rotate carried chamber |
+| Q / E | shrink / grow carried chamber |
+| Tab | open / close the Alien Collection |
+
+## Deploy to Quest 3S
+
+1. **Install Android support for UE 5.7** (currently missing): Epic Games Launcher → Library → UE 5.7 →
+   ▼ → *Options* → tick **Android** → Apply. If 5.7 does not appear in the Launcher library, reinstall
+   5.7 through the Launcher with Android ticked.
+2. Headset: enable Developer Mode (Meta Horizon app), connect USB-C, accept *Allow USB debugging*.
+   `adb devices` must list the headset.
+3. Editor: Platforms → Android → *Package Project* (or Quick Launch to the device).
+   The package folder contains the APK and an `Install_*.bat` that installs it with adb
+   (or run `adb install -r <apk>` yourself).
+4. First launch: allow the **spatial data** permission. If the room has not been scanned, Space Setup opens.
+
+Controls on the headset: point + **trigger / pinch** to select, **grip** or pinch on a chamber to carry it,
+both hands to scale/rotate, thumbstick while carrying to rotate/resize, **Y / B / Menu** (or left-hand
+pinch-and-hold 1 s) to open the collection.
+
+## Tuning without code
+
+* **Aliens** – `Data/DA_Alien_*`: colours, shape, eyes, height, walk speed, idle time, curiosity, energy.
+  Add a new alien: duplicate a `DA_Alien_*`, give it a unique `AlienId`, add it to `DA_AlienCollection`.
+  Real alien art later: make a Blueprint child of `AAlienCharacter` with a skeletal mesh and set it as the
+  data asset's `CharacterClass` (the placeholder body is skipped automatically).
+* **Chamber** – `BP_AlienChamber`: radius, heights, scale range, colours, obstacles, real interior light.
+* **Director** – `BP_MuseumDirector` in the level: collection, starter chamber, max chambers,
+  scene options (occluder labels, debug room view, passthrough), persistence options.
+* **Pawn** – `BP_MuseumPawn`: grab distance, click timing, rotate/scale speeds, optional input assets.
+
+## Quest performance choices
+
+Forward shading, multiview, 4× MSAA, dynamic foveation (level High), no Lumen / VSM / ray tracing /
+distance fields / Substrate, ASTC-only textures, no dynamic shadows (fake contact shadows), unlit
+emissive "lighting" inside chambers, pillars instanced, alien AI thinks at 5 Hz, alien animation only
+when visible, max 8 chambers.
+
+## Known limitations
+
+* **Depth-API occlusion is not available** with the launcher engine in Native OpenXR mode: in Meta XR 1.205
+  `StartEnvironmentDepth` / `SetXROcclusionsMode` only work on Meta's UE fork (`WITH_OCULUS_BRANCH`).
+  Occlusion therefore uses the MRUK room model (walls and furniture become Alpha-Holdout occluders).
+  People and hands do not occlude aliens.
+* UE 5.7.4 hard-codes `quest2|questpro|quest3` in the Android manifest when *Package for Meta Quest* is on;
+  the Meta plugin appends Quest 3S, so the final manifest lists `quest3s` (with duplicates, harmless).
+* Visual Studio 2026 uses MSVC 14.51; UE 5.7 is validated with 14.44. Builds work; installing the
+  *MSVC v14.44 (17.14)* component is recommended.
+* Features that can only be verified on the headset: passthrough, room loading, occluders, anchors,
+  hand tracking and pinch. Everything else was tested in Play-In-Editor.
