@@ -2,7 +2,19 @@
 	"FileVersion": 3,
 	"EngineAssociation": "{CDE4F980-487C-7C7F-3BBA-1B8ACFE0B1EF}",
 	"Category": "",
-	"Description": "",
+	"Description": "Alien Museum - mixed reality museum for Meta Quest 3S",
+	"Modules": [
+		{
+			"Name": "Ben10",
+			"Type": "Runtime",
+			"LoadingPhase": "Default",
+			"AdditionalDependencies": [
+				"Engine",
+				"AIModule",
+				"EnhancedInput"
+			]
+		}
+	],
 	"Plugins": [
 		{
 			"Name": "OpenXR",
@@ -25,20 +37,22 @@
 				"Android",
 				"Linux"
 			]
+		},
+		{
+			"Name": "AndroidPermission",
+			"Enabled": true
+		},
+		{
+			"Name": "ProceduralMeshComponent",
+			"Enabled": true
+		},
+		{
+			"Name": "EnhancedInput",
+			"Enabled": true
 		}
 	],
 	"TargetPlatforms": [
 		"Android",
-		"IOS",
-		"Linux",
-		"Mac",
-		"PS4",
-		"PS5",
-		"Windows",
-		"WindowsNoEditor",
-		"Switch",
-		"XboxOne",
-		"XSX",
-		"VisionOS"
+		"Windows"
 	]
 }

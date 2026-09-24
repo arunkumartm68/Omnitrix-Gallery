@@ -1,0 +1,148 @@
+// Alien Museum - one per level. Runs the start-up flow and owns the museum state.
+//
+//   BeginPlay -> Scene: passthrough + room -> Persistence: restore saved chambers
+//             -> (first run) starter chamber in front of the player -> Alien Collection panel
+//
+// Place BP_MuseumDirector in the level and assign the chamber class, panel class and collection.
+
+#pragma once
+
+#include "CoreMinimal.h"
+#include "GameFramework/Actor.h"
+#include "MuseumDirector.generated.h"
+
+class AAlienChamber;
+class AAlienCollectionPanel;
+class UAlienCollectionAsset;
+class UAlienDataAsset;
+class UMuseumSceneComponent;
+class UMuseumPersistenceComponent;
+
+UCLASS()
+class BEN10_API AMuseumDirector : public AActor
+{
+	GENERATED_BODY()
+
+public:
+	AMuseumDirector();
+
+	/** The director of the world WorldContext belongs to (nullptr if none is placed). */
+	static AMuseumDirector* Get(const UObject* WorldContext);
+
+	/** Spawns a chamber standing on FloorLocation. Optionally puts an alien inside. */
+	UFUNCTION(BlueprintCallable, Category = "Museum")
+	AAlienChamber* SpawnChamberAt(const FVector& FloorLocation, float Yaw, UAlienDataAsset* Alien = nullptr);
+
+	UFUNCTION(BlueprintCallable, Category = "Museum")
+	void PlaceAlienInChamber(AAlienChamber* Chamber, UAlienDataAsset* Alien);
+
+	UFUNCTION(BlueprintCallable, Category = "Museum")
+	void RemoveChamber(AAlienChamber* Chamber);
+
+	/** Removes every chamber and forgets the saved museum. */
+	UFUNCTION(BlueprintCallable, Category = "Museum")
+	void ClearMuseum();
+
+	/** After a chamber was put down: drop it onto the surface below, then save/anchor it. */
+	UFUNCTION(BlueprintCallable, Category = "Museum")
+	void SettleChamber(AAlienChamber* Chamber);
+
+	UFUNCTION(BlueprintCallable, Category = "Museum")
+	void ToggleCollectionPanel();
+
+	UFUNCTION(BlueprintCallable, Category = "Museum")
+	void ShowCollectionPanel();
+
+	UFUNCTION(BlueprintCallable, Category = "Museum")
+	void SetStatusText(const FString& Text);
+
+	/** Shows the scanned room as a hologram (debug) instead of invisible occluders. */
+	UFUNCTION(BlueprintCallable, Category = "Museum")
+	void SetShowRoomDebug(bool bShow);
+
+	UFUNCTION(BlueprintPure, Category = "Museum")
+	bool CanAddChamber() const;
+
+	/** True if a chamber of this radius at FloorLocation would not overlap another chamber. */
+	UFUNCTION(BlueprintPure, Category = "Museum")
+	bool IsPlacementFree(const FVector& FloorLocation, float Radius, const AAlienChamber* Ignore) const;
+
+	UFUNCTION(BlueprintPure, Category = "Museum")
+	TArray<AAlienChamber*> GetChambers() const;
+
+	UFUNCTION(BlueprintPure, Category = "Museum")
+	bool IsMuseumReady() const { return bMuseumReady; }
+
+	UFUNCTION(BlueprintPure, Category = "Museum")
+	UMuseumSceneComponent* GetScene() const { return Scene; }
+
+	UFUNCTION(BlueprintPure, Category = "Museum")
+	UMuseumPersistenceComponent* GetPersistence() const { return Persistence; }
+
+	UFUNCTION(BlueprintPure, Category = "Museum")
+	AAlienCollectionPanel* GetPanel() const { return Panel; }
+
+	// ---------- Designer settings ----------
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Museum")
+	TSubclassOf<AAlienChamber> ChamberClass;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Museum")
+	TSubclassOf<AAlienCollectionPanel> PanelClass;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Museum")
+	TObjectPtr<UAlienCollectionAsset> Collection;
+
+	/** On the very first run, put one chamber with the first alien in front of the player. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Museum")
+	bool bSpawnStarterChamber = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Museum", meta = (Units = "cm"))
+	float StarterChamberDistance = 110.f;
+
+	/** Upper limit that keeps Quest performance predictable (each chamber + alien ~20 draw calls). */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Museum", meta = (ClampMin = 1, ClampMax = 20))
+	int32 MaxChambers = 8;
+
+	/** Level actors with this tag are editor-only test furniture; they are removed when a headset is used. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Museum")
+	FName EditorRoomTag = TEXT("MuseumEditorRoom");
+
+	/** Wait this long after the room is ready before placing things relative to the head. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Museum")
+	float StartupDelay = 0.75f;
+
+protected:
+	virtual void BeginPlay() override;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Museum")
+	TObjectPtr<UMuseumSceneComponent> Scene;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Museum")
+	TObjectPtr<UMuseumPersistenceComponent> Persistence;
+
+private:
+	UFUNCTION()
+	void HandleSceneReady(bool bDeviceScene);
+
+	UFUNCTION()
+	void HandleChamberGrabbed(AAlienChamber* Chamber);
+
+	UFUNCTION()
+	void HandleOccupantChanged(AAlienChamber* Chamber);
+
+	void RestoreMuseum();
+	void RegisterChamber(AAlienChamber* Chamber);
+	void SpawnStarterChamber();
+	void PushOutOfOtherChambers(AAlienChamber* Chamber) const;
+	bool GetViewer(FVector& OutHead, FRotator& OutRotation) const;
+
+	UPROPERTY(Transient)
+	TArray<TObjectPtr<AAlienChamber>> Chambers;
+
+	UPROPERTY(Transient)
+	TObjectPtr<AAlienCollectionPanel> Panel;
+
+	FTimerHandle StartupTimer;
+	bool bMuseumReady = false;
+};
