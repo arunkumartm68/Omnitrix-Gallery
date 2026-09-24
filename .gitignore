@@ -1,0 +1,37 @@
+# Unreal Engine generated folders
+Binaries/
+DerivedDataCache/
+Intermediate/
+Saved/
+Build/*/
+!Build/Android/
+Build/Android/*
+!Build/Android/ManifestRequirementsAdditions.txt
+
+# Plugin build output
+Plugins/**/Binaries/
+Plugins/**/Intermediate/
+
+# IDE / solution files (regenerate with "Generate Visual Studio project files")
+.vs/
+.vscode/
+.idea/
+*.sln
+*.slnx
+*.suo
+*.opensdf
+*.sdf
+*.VC.db
+*.VC.opendb
+*.vcxproj*
+
+# Build artifacts
+*.pdb
+*.apk
+*.obb
+*.aab
+*.ipa
+
+# OS files
+Thumbs.db
+.DS_Store
