@@ -110,6 +110,10 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Museum|Collection")
 	FLinearColor AccentColor = FLinearColor(0.15f, 0.7f, 1.0f);
 
+	/** Heading shown at the top of the panel. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Museum|Collection")
+	FText PanelTitle = FText::FromString(TEXT("ALIEN COLLECTION"));
+
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Museum|Collection")
 	TObjectPtr<UAlienCollectionAsset> Collection;
 

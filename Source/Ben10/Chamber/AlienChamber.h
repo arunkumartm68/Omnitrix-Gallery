@@ -261,6 +261,9 @@ protected:
 private:
 	void BuildLayout();
 	void ApplyMaterials();
+	/** Chamber colour: the occupant's ChamberLightColor if it has one, else LightColor. */
+	FLinearColor GetDesiredLightColor() const;
+	void ApplyLightColor();
 	void RefreshInfoText();
 	void UpdateVisualState();
 	void FaceInfoPanelToViewer(float DeltaSeconds);
@@ -288,6 +291,7 @@ private:
 	TObjectPtr<UMaterialInstanceDynamic> CrystalMID;
 
 	FGuid ChamberId;
+	FLinearColor ActiveLightColor = FLinearColor(0.25f, 0.85f, 1.0f);
 	float PulseTime = 0.f; // > 0 while the "new occupant" light pulse plays
 	bool bGrabbed = false;
 	bool bHighlighted = false;

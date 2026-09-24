@@ -1,7 +1,6 @@
 // Alien Museum - builds and animates the placeholder alien body from an AlienDataAsset.
 
 #include "Aliens/AlienAppearanceComponent.h"
-#include "Data/AlienDataAsset.h"
 #include "Core/MuseumAssets.h"
 #include "Components/StaticMeshComponent.h"
 #include "Engine/StaticMesh.h"
@@ -21,6 +20,10 @@ UAlienAppearanceComponent::UAlienAppearanceComponent()
 {
 	PrimaryComponentTick.bCanEverTick = false; // the owning actor drives UpdateAnimation()
 }
+
+// ---------------------------------------------------------------------------------------------
+// Component helpers
+// ---------------------------------------------------------------------------------------------
 
 USceneComponent* UAlienAppearanceComponent::AddPivot(const TCHAR* BaseName, USceneComponent* Parent, const FTransform& Relative)
 {
@@ -53,6 +56,18 @@ UStaticMeshComponent* UAlienAppearanceComponent::AddPart(const TCHAR* BaseName, 
 	return Part;
 }
 
+UStaticMesh* UAlienAppearanceComponent::GetShapeMesh(EAlienPartShape Shape) const
+{
+	switch (Shape)
+	{
+	case EAlienPartShape::Cylinder: return MuseumAssets::CylinderMesh();
+	case EAlienPartShape::Cone: return MuseumAssets::ConeMesh();
+	case EAlienPartShape::Cube: return MuseumAssets::CubeMesh();
+	case EAlienPartShape::Sphere:
+	default: return MuseumAssets::SphereMesh();
+	}
+}
+
 void UAlienAppearanceComponent::ClearAppearance()
 {
 	// Destroy children first (reverse creation order).
@@ -68,12 +83,114 @@ void UAlienAppearanceComponent::ClearAppearance()
 	Eyes.Reset();
 	EyeBaseScales.Reset();
 	AntennaBaseRoll.Reset();
-	Materials.Reset();
+	AnimatedParts.Reset();
+	CustomMIDs.Reset();
+	SkinMID = AccentMID = DarkMID = EyeMID = GlowMID = nullptr;
 	BodyPivot = nullptr;
 	HeadPivot = nullptr;
 	FootL = nullptr;
 	FootR = nullptr;
 }
+
+// ---------------------------------------------------------------------------------------------
+// Materials
+// ---------------------------------------------------------------------------------------------
+
+void UAlienAppearanceComponent::CreateMaterials(const UAlienDataAsset* Data)
+{
+	UMaterialInterface* OrganicBase = SkinMaterialOverride ? SkinMaterialOverride.Get() : MuseumAssets::AlienSkinMaterial();
+	UMaterialInterface* SkinBase = (Data->SkinStyle == EAlienSkinStyle::Organic || SkinMaterialOverride)
+		? OrganicBase
+		: MuseumAssets::AlienTranslucentMaterial();
+	UMaterialInterface* EmissiveBase = GlowMaterialOverride ? GlowMaterialOverride.Get() : MuseumAssets::EmissiveMaterial();
+
+	const FLinearColor Rim = Data->RimColor.A > 0.f
+		? FLinearColor(Data->RimColor.R, Data->RimColor.G, Data->RimColor.B, 1.f)
+		: FMath::Lerp(Data->SkinColor, FLinearColor::White, 0.5f);
+
+	auto MakeLit = [this](UMaterialInterface* Base, const FLinearColor& Color, const FLinearColor& RimColor) -> UMaterialInstanceDynamic*
+	{
+		if (!Base)
+		{
+			return nullptr;
+		}
+		UMaterialInstanceDynamic* MID = UMaterialInstanceDynamic::Create(Base, this);
+		MID->SetVectorParameterValue(MuseumAssets::Params::Color, Color);
+		MID->SetVectorParameterValue(MuseumAssets::Params::RimColor, RimColor);
+		return MID;
+	};
+	auto MakeGlow = [this, EmissiveBase](const FLinearColor& Color) -> UMaterialInstanceDynamic*
+	{
+		if (!EmissiveBase)
+		{
+			return nullptr;
+		}
+		UMaterialInstanceDynamic* MID = UMaterialInstanceDynamic::Create(EmissiveBase, this);
+		MID->SetVectorParameterValue(MuseumAssets::Params::Color, Color);
+		MID->SetScalarParameterValue(MuseumAssets::Params::Intensity, 1.6f);
+		return MID;
+	};
+
+	SkinMID = MakeLit(SkinBase, Data->SkinColor, Rim);
+	if (SkinMID && SkinBase != OrganicBase)
+	{
+		// See-through styles.
+		const bool bCrystal = Data->SkinStyle == EAlienSkinStyle::Crystal;
+		SkinMID->SetScalarParameterValue(TEXT("BaseOpacity"), bCrystal ? 0.6f : 0.35f);
+		SkinMID->SetScalarParameterValue(TEXT("EdgeOpacity"), bCrystal ? 0.95f : 0.8f);
+		SkinMID->SetScalarParameterValue(TEXT("Brightness"), bCrystal ? 0.8f : 0.9f);
+	}
+	AccentMID = MakeLit(OrganicBase, Data->AccentColor, Data->SkinColor);
+	DarkMID = MakeLit(OrganicBase, FLinearColor(0.02f, 0.02f, 0.025f), FLinearColor(0.15f, 0.15f, 0.17f));
+	EyeMID = MakeGlow(Data->EyeColor);
+	GlowMID = MakeGlow(Data->GlowColor);
+}
+
+UMaterialInterface* UAlienAppearanceComponent::GetPartMaterial(const FAlienBodyPart& Part)
+{
+	switch (Part.Color)
+	{
+	case EAlienPartColor::Accent: return AccentMID;
+	case EAlienPartColor::Dark: return DarkMID;
+	case EAlienPartColor::Eye: return EyeMID;
+	case EAlienPartColor::Glow: return GlowMID;
+	case EAlienPartColor::Custom:
+	{
+		const FLinearColor& C = Part.CustomColor;
+		const FString Key = FString::Printf(TEXT("%.3f_%.3f_%.3f_%d"), C.R, C.G, C.B, Part.bCustomGlows ? 1 : 0);
+		if (TObjectPtr<UMaterialInstanceDynamic>* Found = CustomMIDs.Find(Key))
+		{
+			return *Found;
+		}
+		UMaterialInterface* Base = Part.bCustomGlows
+			? (GlowMaterialOverride ? GlowMaterialOverride.Get() : MuseumAssets::EmissiveMaterial())
+			: (SkinMaterialOverride ? SkinMaterialOverride.Get() : MuseumAssets::AlienSkinMaterial());
+		if (!Base)
+		{
+			return nullptr;
+		}
+		UMaterialInstanceDynamic* MID = UMaterialInstanceDynamic::Create(Base, this);
+		MID->SetVectorParameterValue(MuseumAssets::Params::Color, C);
+		if (Part.bCustomGlows)
+		{
+			MID->SetScalarParameterValue(MuseumAssets::Params::Intensity, 1.6f);
+		}
+		else
+		{
+			MID->SetVectorParameterValue(MuseumAssets::Params::RimColor, FMath::Lerp(C, FLinearColor::White, 0.5f));
+		}
+		CustomMIDs.Add(Key, MID);
+		return MID;
+	}
+	case EAlienPartColor::Skin:
+	default:
+		return SkinMID;
+	}
+}
+
+// ---------------------------------------------------------------------------------------------
+// Building
+// ---------------------------------------------------------------------------------------------
 
 void UAlienAppearanceComponent::BuildAppearance(const UAlienDataAsset* Data)
 {
@@ -89,40 +206,50 @@ void UAlienAppearanceComponent::BuildAppearance(const UAlienDataAsset* Data)
 	bHovers = Data->bHovers;
 	HoverHeight = bHovers ? H * 0.10f : 0.f;
 
+	CreateMaterials(Data);
+
+	// Everything that bobs / squashes / hovers hangs off the body pivot (origin = feet).
+	BodyPivot = AddPivot(TEXT("AlienBodyPivot"), this, FTransform(FVector(0.f, 0.f, HoverHeight)));
+
+	if (Data->BodyShape == EAlienBodyShape::Custom)
+	{
+		// Whole creature from parts; the head joint comes from the data.
+		HeadBaseXY = FVector2D(Data->CustomHeadPivot.X * H, Data->CustomHeadPivot.Y * H);
+		HeadBaseZ = Data->CustomHeadPivot.Z * H;
+		HeadPivot = AddPivot(TEXT("AlienHeadPivot"), this, FTransform(FVector(HeadBaseXY.X, HeadBaseXY.Y, HeadBaseZ + HoverHeight)));
+		ModelRadius = Data->CustomRadius * H;
+		CollisionRadius = ModelRadius;
+	}
+	else
+	{
+		HeadBaseXY = FVector2D::ZeroVector;
+		BuildBuiltInBody(Data);
+		CollisionRadius = ModelRadius * 0.8f;
+	}
+
+	for (const FAlienBodyPart& Part : Data->Parts)
+	{
+		AddDataPart(Part, false);
+		if (Part.bMirror)
+		{
+			AddDataPart(Part, true);
+		}
+	}
+
+	AnimTime = FMath::FRand() * 10.f;
+	BlinkTimer = FMath::FRandRange(1.f, 4.f);
+	HeadRotation = FRotator::ZeroRotator;
+}
+
+void UAlienAppearanceComponent::BuildBuiltInBody(const UAlienDataAsset* Data)
+{
+	const float H = Data->Height;
 	UStaticMesh* Sphere = MuseumAssets::SphereMesh();
 	UStaticMesh* Cylinder = MuseumAssets::CylinderMesh();
-
-	// Materials (one dynamic instance per colour).
-	UMaterialInterface* SkinBase = SkinMaterialOverride ? SkinMaterialOverride.Get() : MuseumAssets::AlienSkinMaterial();
-	UMaterialInterface* GlowBase = GlowMaterialOverride ? GlowMaterialOverride.Get() : MuseumAssets::EmissiveMaterial();
-
-	UMaterialInstanceDynamic* SkinMID = SkinBase ? UMaterialInstanceDynamic::Create(SkinBase, this) : nullptr;
-	UMaterialInstanceDynamic* AccentMID = SkinBase ? UMaterialInstanceDynamic::Create(SkinBase, this) : nullptr;
-	UMaterialInstanceDynamic* GlowMID = GlowBase ? UMaterialInstanceDynamic::Create(GlowBase, this) : nullptr;
-	if (SkinMID)
-	{
-		SkinMID->SetVectorParameterValue(MuseumAssets::Params::Color, Data->SkinColor);
-		SkinMID->SetVectorParameterValue(MuseumAssets::Params::RimColor, FMath::Lerp(Data->SkinColor, FLinearColor::White, 0.5f));
-		Materials.Add(SkinMID);
-	}
-	if (AccentMID)
-	{
-		AccentMID->SetVectorParameterValue(MuseumAssets::Params::Color, Data->AccentColor);
-		AccentMID->SetVectorParameterValue(MuseumAssets::Params::RimColor, Data->SkinColor);
-		Materials.Add(AccentMID);
-	}
-	if (GlowMID)
-	{
-		GlowMID->SetVectorParameterValue(MuseumAssets::Params::Color, Data->EyeColor);
-		GlowMID->SetScalarParameterValue(MuseumAssets::Params::Intensity, 1.6f);
-		Materials.Add(GlowMID);
-	}
 
 	// ---- Body ----
 	float HeadDiameter = 0.46f * H;
 	float HeadOffset = 0.20f * H; // head centre above the neck pivot
-
-	BodyPivot = AddPivot(TEXT("AlienBodyPivot"), this, FTransform(FVector(0.f, 0.f, HoverHeight)));
 
 	switch (Data->BodyShape)
 	{
@@ -160,8 +287,8 @@ void UAlienAppearanceComponent::BuildAppearance(const UAlienDataAsset* Data)
 	const float HeadR = HeadDiameter * 0.5f;
 
 	// ---- Eyes ----
-	const int32 EyeCount = FMath::Clamp(Data->EyeCount, 1, 3);
-	const float EyeD = (EyeCount == 1 ? 0.16f : 0.10f) * H;
+	const int32 EyeCount = FMath::Clamp(Data->EyeCount, 0, 3);
+	const float EyeD = (EyeCount == 1 ? 0.16f : 0.10f) * H * Data->EyeSize;
 	TArray<FVector> EyePositions;
 	if (EyeCount == 1)
 	{
@@ -172,7 +299,7 @@ void UAlienAppearanceComponent::BuildAppearance(const UAlienDataAsset* Data)
 		EyePositions.Add(FVector(HeadR * 0.78f, -HeadR * 0.38f, HeadOffset + HeadR * 0.12f));
 		EyePositions.Add(FVector(HeadR * 0.78f, HeadR * 0.38f, HeadOffset + HeadR * 0.12f));
 	}
-	else
+	else if (EyeCount == 3)
 	{
 		EyePositions.Add(FVector(HeadR * 0.76f, -HeadR * 0.46f, HeadOffset + HeadR * 0.05f));
 		EyePositions.Add(FVector(HeadR * 0.84f, 0.f, HeadOffset + HeadR * 0.30f));
@@ -181,7 +308,7 @@ void UAlienAppearanceComponent::BuildAppearance(const UAlienDataAsset* Data)
 	for (const FVector& EyePos : EyePositions)
 	{
 		const FVector EyeScale = SizeToScale(EyeD * 0.7f, EyeD, EyeD);
-		Eyes.Add(AddPart(TEXT("AlienEye"), Sphere, HeadPivot, FTransform(FQuat::Identity, EyePos, EyeScale), GlowMID));
+		Eyes.Add(AddPart(TEXT("AlienEye"), Sphere, HeadPivot, FTransform(FQuat::Identity, EyePos, EyeScale), EyeMID));
 		EyeBaseScales.Add(EyeScale);
 	}
 
@@ -194,7 +321,7 @@ void UAlienAppearanceComponent::BuildAppearance(const UAlienDataAsset* Data)
 			USceneComponent* Pivot = AddPivot(TEXT("AlienAntennaPivot"), HeadPivot,
 				FTransform(FRotator(0.f, 0.f, BaseRoll), FVector(0.f, Side * HeadR * 0.35f, HeadOffset + HeadR * 0.80f)));
 			AddPart(TEXT("AlienAntenna"), Cylinder, Pivot, FTransform(FQuat::Identity, FVector(0, 0, 0.11f * H), SizeToScale(0.03f * H, 0.03f * H, 0.22f * H)), AccentMID);
-			AddPart(TEXT("AlienAntennaTip"), Sphere, Pivot, FTransform(FQuat::Identity, FVector(0, 0, 0.23f * H), SizeToScale(0.07f * H, 0.07f * H, 0.07f * H)), GlowMID);
+			AddPart(TEXT("AlienAntennaTip"), Sphere, Pivot, FTransform(FQuat::Identity, FVector(0, 0, 0.23f * H), SizeToScale(0.07f * H, 0.07f * H, 0.07f * H)), EyeMID);
 			AntennaPivots.Add(Pivot);
 			AntennaBaseRoll.Add(BaseRoll);
 		}
@@ -209,11 +336,73 @@ void UAlienAppearanceComponent::BuildAppearance(const UAlienDataAsset* Data)
 		FootL = AddPart(TEXT("AlienFootL"), Sphere, this, FTransform(FQuat::Identity, FootLBase, SizeToScale(FootD * 1.3f, FootD, FootD * 0.55f)), AccentMID);
 		FootR = AddPart(TEXT("AlienFootR"), Sphere, this, FTransform(FQuat::Identity, FootRBase, SizeToScale(FootD * 1.3f, FootD, FootD * 0.55f)), AccentMID);
 	}
-
-	AnimTime = FMath::FRand() * 10.f;
-	BlinkTimer = FMath::FRandRange(1.f, 4.f);
-	HeadRotation = FRotator::ZeroRotator;
 }
+
+void UAlienAppearanceComponent::AddDataPart(const FAlienBodyPart& Part, bool bMirrored)
+{
+	const float H = ModelHeight;
+
+	FVector Offset = Part.Offset * H;
+	FRotator Rotation = Part.Rotation;
+	FVector PivotOffset = Part.PivotOffset * H;
+	float Amount = Part.MotionAmount;
+	float Phase = Part.MotionPhase;
+
+	if (bMirrored)
+	{
+		// Mirror across the alien's centre plane (Y -> -Y).
+		Offset.Y = -Offset.Y;
+		PivotOffset.Y = -PivotOffset.Y;
+		Rotation.Yaw = -Rotation.Yaw;
+		Rotation.Roll = -Rotation.Roll;
+		if (Part.Motion == EAlienPartMotion::WalkSwing)
+		{
+			Phase += 0.5f; // left and right limbs alternate
+		}
+		else if (Part.Motion == EAlienPartMotion::SwayRoll || Part.Motion == EAlienPartMotion::SwayYaw)
+		{
+			Amount = -Amount; // wings flap symmetrically
+		}
+	}
+
+	USceneComponent* Parent = BodyPivot;
+	if (Part.AttachTo == EAlienPartAttach::Head && HeadPivot)
+	{
+		Parent = HeadPivot;
+	}
+	else if (Part.AttachTo == EAlienPartAttach::Feet)
+	{
+		Parent = this;
+	}
+
+	const FVector Scale = Part.Size * H / 100.f;
+	UStaticMeshComponent* Component = AddPart(TEXT("AlienPart"), GetShapeMesh(Part.Shape), Parent, FTransform(Rotation, Offset, Scale), GetPartMaterial(Part));
+
+	if (Part.Color == EAlienPartColor::Eye)
+	{
+		Eyes.Add(Component);
+		EyeBaseScales.Add(Scale);
+	}
+
+	if (Part.Motion != EAlienPartMotion::None)
+	{
+		FAnimatedPart Animated;
+		Animated.Component = Component;
+		Animated.BaseLocation = Offset;
+		Animated.BaseRotation = Rotation.Quaternion();
+		Animated.BaseScale = Scale;
+		Animated.Pivot = Offset + PivotOffset;
+		Animated.Motion = Part.Motion;
+		Animated.Amount = Amount;
+		Animated.Speed = Part.MotionSpeed;
+		Animated.Phase = Phase;
+		AnimatedParts.Add(Animated);
+	}
+}
+
+// ---------------------------------------------------------------------------------------------
+// Materialize
+// ---------------------------------------------------------------------------------------------
 
 void UAlienAppearanceComponent::PlayMaterialize(float Duration)
 {
@@ -242,6 +431,65 @@ bool UAlienAppearanceComponent::UpdateMaterialize(float DeltaSeconds)
 		return false;
 	}
 	return true;
+}
+
+// ---------------------------------------------------------------------------------------------
+// Animation
+// ---------------------------------------------------------------------------------------------
+
+void UAlienAppearanceComponent::AnimateDataParts(float SpeedAlpha)
+{
+	const float Tau = 2.f * PI;
+	const float Step = AnimTime * 6.f; // same walk clock as the built-in feet
+
+	for (const FAnimatedPart& Part : AnimatedParts)
+	{
+		UStaticMeshComponent* Component = Part.Component.Get();
+		if (!Component)
+		{
+			continue;
+		}
+		const float Cycle = (AnimTime * Part.Speed + Part.Phase) * Tau;
+
+		FRotator Delta = FRotator::ZeroRotator;
+		switch (Part.Motion)
+		{
+		case EAlienPartMotion::SwayRoll:
+			Delta.Roll = FMath::Sin(Cycle) * Part.Amount;
+			break;
+		case EAlienPartMotion::SwayPitch:
+			Delta.Pitch = FMath::Sin(Cycle) * Part.Amount;
+			break;
+		case EAlienPartMotion::SwayYaw:
+			Delta.Yaw = FMath::Sin(Cycle) * Part.Amount;
+			break;
+		case EAlienPartMotion::WalkSwing:
+			// Big swing while walking, a tiny idle sway while standing.
+			Delta.Pitch = FMath::Sin(Step + Part.Phase * Tau) * Part.Amount * SpeedAlpha
+				+ FMath::Sin(AnimTime * 1.3f + Part.Phase * Tau) * 2.f;
+			break;
+		case EAlienPartMotion::Spin:
+			Delta.Yaw = FMath::Fmod(AnimTime * Part.Amount * Part.Speed, 360.f);
+			break;
+		case EAlienPartMotion::Flicker:
+		{
+			const float Noise = 0.6f * FMath::Sin(Cycle) + 0.4f * FMath::Sin(Cycle * 2.3f + 1.7f);
+			const float A = Part.Amount / 100.f;
+			Component->SetRelativeScale3D(Part.BaseScale * FVector(1.f - Noise * A * 0.3f, 1.f - Noise * A * 0.3f, 1.f + Noise * A));
+			continue;
+		}
+		case EAlienPartMotion::Pulse:
+			Component->SetRelativeScale3D(Part.BaseScale * (1.f + FMath::Sin(Cycle) * Part.Amount / 100.f));
+			continue;
+		default:
+			continue;
+		}
+
+		// Rotate around the joint (pivot) in the parent's space.
+		const FQuat DeltaQ = Delta.Quaternion();
+		const FVector Location = Part.Pivot + DeltaQ.RotateVector(Part.BaseLocation - Part.Pivot);
+		Component->SetRelativeLocationAndRotation(Location, DeltaQ * Part.BaseRotation);
+	}
 }
 
 void UAlienAppearanceComponent::UpdateAnimation(float DeltaSeconds, float SpeedAlpha, const FVector* LookTarget, bool bExcited)
@@ -279,7 +527,7 @@ void UAlienAppearanceComponent::UpdateAnimation(float DeltaSeconds, float SpeedA
 	}
 
 	// Head follows the top of the body.
-	HeadPivot->SetRelativeLocation(FVector(0.f, 0.f, HeadBaseZ * (1.f + Squash) + BodyLift));
+	HeadPivot->SetRelativeLocation(FVector(HeadBaseXY.X, HeadBaseXY.Y, HeadBaseZ * (1.f + Squash) + BodyLift));
 
 	// Head look-at (clamped), otherwise a lazy idle sway.
 	FRotator Desired(0.f, FMath::Sin(AnimTime * 0.6f) * 12.f, FMath::Sin(AnimTime * 0.9f) * 4.f);
@@ -305,6 +553,9 @@ void UAlienAppearanceComponent::UpdateAnimation(float DeltaSeconds, float SpeedA
 				AntennaBaseRoll[i] + FMath::Sin(AnimTime * 2.3f + i * 1.7f) * Amp * 0.6f));
 		}
 	}
+
+	// Data-driven parts: limbs, wings, tails, flames...
+	AnimateDataParts(SpeedAlpha);
 
 	// Blink.
 	float EyeOpen = 1.f;

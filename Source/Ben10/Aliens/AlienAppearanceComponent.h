@@ -1,8 +1,10 @@
 // Alien Museum - builds and animates the placeholder alien body from an AlienDataAsset.
 //
-// The body is made of engine basic shapes (spheres, cylinders), so there is no copyrighted or
-// high-poly content. Animation is procedural (bob, squash & stretch, feet, head look-at, blink)
-// which is far cheaper on Quest than a skeletal mesh + animation blueprint.
+// The body is made of engine basic shapes (spheres, cylinders, cones, cubes), so there is no
+// imported art. It is either one of the built-in shapes (Blob / Tall / Squat) or fully described by
+// the data asset's Parts list (BodyShape = Custom). Animation is procedural (bob, squash & stretch,
+// walk swing, head look-at, blink, wing flaps, flame flicker), which is far cheaper on Quest than
+// skeletal meshes + animation blueprints.
 // When real alien art exists, give the AAlienCharacter a skeletal mesh instead; this component
 // then stays empty.
 
@@ -10,9 +12,10 @@
 
 #include "CoreMinimal.h"
 #include "Components/SceneComponent.h"
+#include "Data/AlienDataAsset.h"
 #include "AlienAppearanceComponent.generated.h"
 
-class UAlienDataAsset;
+class UStaticMesh;
 class UStaticMeshComponent;
 class UMaterialInstanceDynamic;
 class UMaterialInterface;
@@ -53,6 +56,9 @@ public:
 	/** Approximate horizontal radius of the model at scale 1 (cm). */
 	float GetModelRadius() const { return ModelRadius; }
 
+	/** Radius for the collision capsule at scale 1 (cm). */
+	float GetCollisionRadius() const { return CollisionRadius; }
+
 	bool HasParts() const { return Parts.Num() > 0; }
 
 	/** Optional material overrides (default: /Game/AlienMuseum/Materials). */
@@ -62,12 +68,33 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Alien")
 	TObjectPtr<UMaterialInterface> GlowMaterialOverride;
 
-	/** Dynamic shadows on the body parts. Off by default: a blob shadow is much cheaper on Quest. */
+	/** Dynamic shadows on the body parts. Off by default: a contact shadow is much cheaper on Quest. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Alien")
 	bool bCastShadows = false;
 
 private:
-	UStaticMeshComponent* AddPart(const TCHAR* BaseName, class UStaticMesh* Mesh, USceneComponent* Parent, const FTransform& Relative, UMaterialInterface* Material);
+	/** A data part that moves on its own (swinging limb, flapping wing, flickering flame...). */
+	struct FAnimatedPart
+	{
+		TWeakObjectPtr<UStaticMeshComponent> Component;
+		FVector BaseLocation = FVector::ZeroVector;
+		FQuat BaseRotation = FQuat::Identity;
+		FVector BaseScale = FVector::OneVector;
+		FVector Pivot = FVector::ZeroVector; // parent space
+		EAlienPartMotion Motion = EAlienPartMotion::None;
+		float Amount = 0.f;
+		float Speed = 1.f;
+		float Phase = 0.f;
+	};
+
+	void CreateMaterials(const UAlienDataAsset* Data);
+	void BuildBuiltInBody(const UAlienDataAsset* Data);
+	void AddDataPart(const FAlienBodyPart& Part, bool bMirrored);
+	UMaterialInterface* GetPartMaterial(const FAlienBodyPart& Part);
+	UStaticMesh* GetShapeMesh(EAlienPartShape Shape) const;
+	void AnimateDataParts(float SpeedAlpha);
+
+	UStaticMeshComponent* AddPart(const TCHAR* BaseName, UStaticMesh* Mesh, USceneComponent* Parent, const FTransform& Relative, UMaterialInterface* Material);
 	USceneComponent* AddPivot(const TCHAR* BaseName, USceneComponent* Parent, const FTransform& Relative);
 
 	UPROPERTY(Transient)
@@ -92,13 +119,33 @@ private:
 	TObjectPtr<UStaticMeshComponent> FootR;
 
 	UPROPERTY(Transient)
-	TArray<TObjectPtr<UMaterialInstanceDynamic>> Materials;
+	TObjectPtr<UMaterialInstanceDynamic> SkinMID;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UMaterialInstanceDynamic> AccentMID;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UMaterialInstanceDynamic> DarkMID;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UMaterialInstanceDynamic> EyeMID;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UMaterialInstanceDynamic> GlowMID;
+
+	/** One material instance per custom colour. */
+	UPROPERTY(Transient)
+	TMap<FString, TObjectPtr<UMaterialInstanceDynamic>> CustomMIDs;
+
+	TArray<FAnimatedPart> AnimatedParts;
 
 	float ModelHeight = 32.f;
 	float ModelRadius = 10.f;
+	float CollisionRadius = 8.f;
 	float Energy = 0.5f;
 	bool bHovers = false;
 	float HoverHeight = 0.f;
+	FVector2D HeadBaseXY = FVector2D::ZeroVector;
 	float HeadBaseZ = 0.f;
 
 	FVector FootLBase = FVector::ZeroVector;

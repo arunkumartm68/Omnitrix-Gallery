@@ -157,6 +157,8 @@ void AAlienCollectionPanel::BeginPlay()
 {
 	Super::BeginPlay();
 
+	Title->SetText(PanelTitle);
+
 	UMaterialInterface* Hologram = MuseumAssets::HologramMaterial();
 	if (Hologram)
 	{

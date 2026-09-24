@@ -87,16 +87,18 @@ void AAlienCharacter::InitializeAlien(UAlienDataAsset* InData, AAlienChamber* In
 	// Build the placeholder only when no real skeletal mesh was assigned in a Blueprint subclass.
 	float ModelHeight = AlienData->Height;
 	float ModelRadius = AlienData->Height * 0.3f;
+	float CollisionRadius = ModelRadius * 0.8f;
 	if (!GetMesh()->GetSkeletalMeshAsset())
 	{
 		Appearance->BuildAppearance(AlienData);
 		Appearance->PlayMaterialize(0.6f);
 		ModelHeight = Appearance->GetModelHeight();
 		ModelRadius = Appearance->GetModelRadius();
+		CollisionRadius = Appearance->GetCollisionRadius();
 	}
 	bAppearanceBuilt = true;
 
-	const float Radius = FMath::Clamp(ModelRadius * 0.8f, 6.f, 20.f);
+	const float Radius = FMath::Clamp(CollisionRadius, 6.f, 20.f);
 	const float HalfHeight = FMath::Max(Radius, ModelHeight * 0.5f);
 	GetCapsuleComponent()->SetCapsuleSize(Radius, HalfHeight);
 	Appearance->SetRelativeLocation(FVector(0.f, 0.f, -HalfHeight));

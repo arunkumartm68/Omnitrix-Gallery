@@ -279,7 +279,7 @@ void AAlienChamber::BuildLayout()
 
 	InteriorLight->SetRelativeLocation(FVector(0.f, 0.f, TopZ - 8.f));
 	InteriorLight->SetAttenuationRadius(R * 2.5f);
-	InteriorLight->SetLightColor(LightColor);
+	InteriorLight->SetLightColor(ActiveLightColor);
 	InteriorLight->SetVisibility(bUseRealInteriorLight);
 
 	InfoRoot->SetRelativeLocation(FVector(0.f, 0.f, TopZ + 22.f));
@@ -319,15 +319,38 @@ void AAlienChamber::ApplyMaterials()
 	}
 	if (GlassMID)
 	{
-		GlassMID->SetVectorParameterValue(MuseumAssets::Params::Tint, LightColor);
 		Glass->SetMaterial(0, GlassMID);
 	}
 	if (HologramMID)
 	{
-		HologramMID->SetVectorParameterValue(MuseumAssets::Params::Color, LightColor * 0.6f);
 		HologramMID->SetScalarParameterValue(MuseumAssets::Params::Opacity, 0.35f);
 		InfoBackground->SetMaterial(0, HologramMID);
 	}
+	ActiveLightColor = GetDesiredLightColor();
+	ApplyLightColor();
+}
+
+FLinearColor AAlienChamber::GetDesiredLightColor() const
+{
+	if (OccupantData && OccupantData->ChamberLightColor.A > 0.f)
+	{
+		const FLinearColor& C = OccupantData->ChamberLightColor;
+		return FLinearColor(C.R, C.G, C.B, 1.f);
+	}
+	return LightColor;
+}
+
+void AAlienChamber::ApplyLightColor()
+{
+	if (GlassMID)
+	{
+		GlassMID->SetVectorParameterValue(MuseumAssets::Params::Tint, ActiveLightColor);
+	}
+	if (HologramMID)
+	{
+		HologramMID->SetVectorParameterValue(MuseumAssets::Params::Color, ActiveLightColor * 0.6f);
+	}
+	InteriorLight->SetLightColor(ActiveLightColor);
 	UpdateVisualState();
 }
 
@@ -399,6 +422,8 @@ AAlienCharacter* AAlienChamber::SpawnAlien(UAlienDataAsset* Data)
 	Alien->InitializeAlien(Data, this);
 	Occupant = Alien;
 	OccupantData = Data;
+	ActiveLightColor = GetDesiredLightColor();
+	ApplyLightColor();
 	RefreshInfoText();
 	SetInfoPanelVisible(true);
 	PulseTime = 1.2f; // welcome light pulse
@@ -415,6 +440,8 @@ void AAlienChamber::RemoveAlien()
 	const bool bChanged = Occupant != nullptr || OccupantData != nullptr;
 	Occupant = nullptr;
 	OccupantData = nullptr;
+	ActiveLightColor = LightColor;
+	ApplyLightColor();
 	RefreshInfoText();
 	if (bChanged)
 	{
@@ -594,7 +621,7 @@ void AAlienChamber::UpdateVisualState()
 {
 	const FLinearColor Invalid(1.f, 0.25f, 0.2f);
 	const bool bShowInvalid = bHighlighted && !bValidTargetHighlight;
-	const FLinearColor Color = bShowInvalid ? Invalid : LightColor;
+	const FLinearColor Color = bShowInvalid ? Invalid : ActiveLightColor;
 	const float Intensity = bGrabbed ? 2.2f : (bHighlighted ? 2.0f : 1.0f);
 
 	if (GlowMID)
