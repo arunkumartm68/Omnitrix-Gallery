@@ -31,3 +31,4 @@ UMaterialInterface* MuseumAssets::EmissiveMaterial() { return LoadMuseumAsset<UM
 UMaterialInterface* MuseumAssets::HologramMaterial() { return LoadMuseumAsset<UMaterialInterface>(TEXT("/Game/AlienMuseum/Materials/M_MuseumHologram.M_MuseumHologram")); }
 UMaterialInterface* MuseumAssets::OccluderMaterial() { return LoadMuseumAsset<UMaterialInterface>(TEXT("/Game/AlienMuseum/Materials/M_MuseumOccluder.M_MuseumOccluder")); }
 UMaterialInterface* MuseumAssets::AlienSkinMaterial() { return LoadMuseumAsset<UMaterialInterface>(TEXT("/Game/AlienMuseum/Materials/M_AlienSkin.M_AlienSkin")); }
+UMaterialInterface* MuseumAssets::BlobShadowMaterial() { return LoadMuseumAsset<UMaterialInterface>(TEXT("/Game/AlienMuseum/Materials/M_BlobShadow.M_BlobShadow")); }

@@ -41,6 +41,12 @@ public:
 	 */
 	void UpdateAnimation(float DeltaSeconds, float SpeedAlpha, const FVector* LookTarget, bool bExcited);
 
+	/** Starts the "materialize" pop-in (scale from nothing with a little overshoot). */
+	void PlayMaterialize(float Duration = 0.6f);
+
+	/** Advances the materialize effect. Returns true while it is still playing. */
+	bool UpdateMaterialize(float DeltaSeconds);
+
 	/** Height of the model at scale 1 (cm). */
 	float GetModelHeight() const { return ModelHeight; }
 
@@ -101,6 +107,8 @@ private:
 	TArray<float> AntennaBaseRoll;
 
 	float AnimTime = 0.f;
+	float MaterializeTime = -1.f;
+	float MaterializeDuration = 0.6f;
 	float BlinkTimer = 2.f;
 	float BlinkPhase = -1.f;
 	FRotator HeadRotation = FRotator::ZeroRotator;

@@ -24,6 +24,7 @@ namespace MuseumAssets
 	BEN10_API UMaterialInterface* HologramMaterial();
 	BEN10_API UMaterialInterface* OccluderMaterial();
 	BEN10_API UMaterialInterface* AlienSkinMaterial();
+	BEN10_API UMaterialInterface* BlobShadowMaterial();
 
 	/** Material parameter names shared by the /Game/AlienMuseum/Materials assets. */
 	namespace Params

@@ -9,8 +9,11 @@
 #include "Components/CapsuleComponent.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "GameFramework/CharacterMovementComponent.h"
+#include "Core/MuseumAssets.h"
+#include "Components/StaticMeshComponent.h"
 #include "Engine/CollisionProfile.h"
-#include "MRUtilityKitBlobShadowComponent.h"
+#include "Engine/StaticMesh.h"
+#include "UObject/ConstructorHelpers.h"
 
 AAlienCharacter::AAlienCharacter()
 {
@@ -29,11 +32,15 @@ AAlienCharacter::AAlienCharacter()
 	Appearance->SetupAttachment(Capsule);
 	Appearance->SetRelativeLocation(FVector(0.f, 0.f, -16.f));
 
-	BlobShadow = CreateDefaultSubobject<UMRUKBlobShadowComponent>(TEXT("BlobShadow"));
-	BlobShadow->SetupAttachment(Capsule);
-	BlobShadow->MaxVerticalDistance = 60.f;
-	BlobShadow->FadeDistance = 15.f;
-	BlobShadow->ExtraExtent = -2.f;
+	static ConstructorHelpers::FObjectFinder<UStaticMesh> PlaneFinder(TEXT("/Engine/BasicShapes/Plane.Plane"));
+	ContactShadow = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("ContactShadow"));
+	ContactShadow->SetupAttachment(Capsule);
+	ContactShadow->SetStaticMesh(PlaneFinder.Object);
+	ContactShadow->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	ContactShadow->SetCastShadow(false);
+	ContactShadow->SetCanEverAffectNavigation(false);
+	ContactShadow->SetRelativeLocation(FVector(0.f, 0.f, -15.7f));
+	ContactShadow->SetRelativeScale3D(FVector(0.2f));
 
 	bUseControllerRotationYaw = false;
 	bUseControllerRotationPitch = false;
@@ -83,6 +90,7 @@ void AAlienCharacter::InitializeAlien(UAlienDataAsset* InData, AAlienChamber* In
 	if (!GetMesh()->GetSkeletalMeshAsset())
 	{
 		Appearance->BuildAppearance(AlienData);
+		Appearance->PlayMaterialize(0.6f);
 		ModelHeight = Appearance->GetModelHeight();
 		ModelRadius = Appearance->GetModelRadius();
 	}
@@ -93,7 +101,14 @@ void AAlienCharacter::InitializeAlien(UAlienDataAsset* InData, AAlienChamber* In
 	GetCapsuleComponent()->SetCapsuleSize(Radius, HalfHeight);
 	Appearance->SetRelativeLocation(FVector(0.f, 0.f, -HalfHeight));
 	GetMesh()->SetRelativeLocation(FVector(0.f, 0.f, -HalfHeight));
-	BlobShadow->SetRelativeLocation(FVector(0.f, 0.f, -HalfHeight));
+
+	// Contact shadow: a soft disc just above the floor, a bit wider than the body.
+	ContactShadow->SetRelativeLocation(FVector(0.f, 0.f, -HalfHeight + 0.3f));
+	ContactShadow->SetRelativeScale3D(FVector(ModelRadius * 2.6f / 100.f, ModelRadius * 2.6f / 100.f, 1.f));
+	if (UMaterialInterface* ShadowMaterial = MuseumAssets::BlobShadowMaterial())
+	{
+		ContactShadow->SetMaterial(0, ShadowMaterial);
+	}
 
 	ApplyScaleDependentSettings();
 
@@ -211,6 +226,11 @@ void AAlienCharacter::Tick(float DeltaSeconds)
 	UpdateMovement(DeltaSeconds);
 	UpdateTurning(DeltaSeconds);
 	UpdateContainment(DeltaSeconds);
+
+	if (Appearance)
+	{
+		Appearance->UpdateMaterialize(DeltaSeconds);
+	}
 
 	// Only animate when someone can see it (the procedural animation touches several components).
 	if (Appearance && Appearance->HasParts() && WasRecentlyRendered(0.25f))

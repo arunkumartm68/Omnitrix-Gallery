@@ -215,6 +215,35 @@ void UAlienAppearanceComponent::BuildAppearance(const UAlienDataAsset* Data)
 	HeadRotation = FRotator::ZeroRotator;
 }
 
+void UAlienAppearanceComponent::PlayMaterialize(float Duration)
+{
+	MaterializeDuration = FMath::Max(0.05f, Duration);
+	MaterializeTime = 0.f;
+	SetRelativeScale3D(FVector(0.05f)); // tiny but still rendered
+}
+
+bool UAlienAppearanceComponent::UpdateMaterialize(float DeltaSeconds)
+{
+	if (MaterializeTime < 0.f)
+	{
+		return false;
+	}
+	MaterializeTime += DeltaSeconds;
+	const float T = FMath::Clamp(MaterializeTime / MaterializeDuration, 0.f, 1.f);
+	// Ease-out-back: overshoots slightly, then settles at 1.
+	const float C1 = 1.70158f;
+	const float C3 = C1 + 1.f;
+	const float Scale = 1.f + C3 * FMath::Pow(T - 1.f, 3.f) + C1 * FMath::Pow(T - 1.f, 2.f);
+	SetRelativeScale3D(FVector(FMath::Max(0.05f, Scale)));
+	if (T >= 1.f)
+	{
+		MaterializeTime = -1.f;
+		SetRelativeScale3D(FVector::OneVector);
+		return false;
+	}
+	return true;
+}
+
 void UAlienAppearanceComponent::UpdateAnimation(float DeltaSeconds, float SpeedAlpha, const FVector* LookTarget, bool bExcited)
 {
 	if (!BodyPivot || !HeadPivot)

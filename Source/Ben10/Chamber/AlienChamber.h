@@ -288,6 +288,7 @@ private:
 	TObjectPtr<UMaterialInstanceDynamic> CrystalMID;
 
 	FGuid ChamberId;
+	float PulseTime = 0.f; // > 0 while the "new occupant" light pulse plays
 	bool bGrabbed = false;
 	bool bHighlighted = false;
 	bool bValidTargetHighlight = true;

@@ -401,6 +401,7 @@ AAlienCharacter* AAlienChamber::SpawnAlien(UAlienDataAsset* Data)
 	OccupantData = Data;
 	RefreshInfoText();
 	SetInfoPanelVisible(true);
+	PulseTime = 1.2f; // welcome light pulse
 	OnOccupantChanged.Broadcast(this);
 	return Alien;
 }
@@ -676,6 +677,21 @@ void AAlienChamber::Tick(float DeltaSeconds)
 	if (bInfoVisible)
 	{
 		FaceInfoPanelToViewer(DeltaSeconds);
+	}
+
+	// Light pulse when a new alien arrives.
+	if (PulseTime > 0.f)
+	{
+		PulseTime = FMath::Max(0.f, PulseTime - DeltaSeconds);
+		if (GlowMID)
+		{
+			const float Pulse = FMath::Abs(FMath::Sin(PulseTime * 2.f * PI * 1.5f)) * PulseTime;
+			GlowMID->SetScalarParameterValue(MuseumAssets::Params::Intensity, 1.f + 2.5f * Pulse);
+		}
+		if (PulseTime <= 0.f)
+		{
+			UpdateVisualState();
+		}
 	}
 }
 

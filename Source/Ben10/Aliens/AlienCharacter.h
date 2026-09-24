@@ -13,7 +13,7 @@
 
 class UAlienDataAsset;
 class UAlienAppearanceComponent;
-class UMRUKBlobShadowComponent;
+class UStaticMeshComponent;
 class AAlienChamber;
 
 UCLASS()
@@ -56,6 +56,8 @@ public:
 
 	/** While the chamber is carried the alien freezes and rides along. */
 	void SetHeld(bool bHeld);
+
+	UFUNCTION(BlueprintPure, Category = "Alien")
 	bool IsHeld() const { return bIsHeld; }
 
 	/** Current size relative to the data asset (follows the chamber scale). */
@@ -69,9 +71,9 @@ protected:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Alien")
 	TObjectPtr<UAlienAppearanceComponent> Appearance;
 
-	/** Cheap fake contact shadow from MR Utility Kit. */
+	/** Cheap fake contact shadow: a soft dark disc under the feet (no dynamic shadows on Quest). */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Alien")
-	TObjectPtr<UMRUKBlobShadowComponent> BlobShadow;
+	TObjectPtr<UStaticMeshComponent> ContactShadow;
 
 	/** Data used when the alien is placed in a level by hand (normally set by InitializeAlien). */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Alien")
