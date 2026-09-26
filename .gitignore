@@ -25,6 +25,12 @@ Plugins/**/Intermediate/
 *.VC.opendb
 *.vcxproj*
 
+# Raw downloaded source art (third-party, large). The imported assets live in Content/.
+SourceArt/
+
+# Python bytecode (Blender imports the shared helper module)
+__pycache__/
+
 # Build artifacts
 *.pdb
 *.apk

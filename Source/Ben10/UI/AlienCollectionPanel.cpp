@@ -223,7 +223,10 @@ void AAlienCollectionPanel::RefreshCards()
 		{
 			Card.Name->SetText(Data->DisplayName);
 			Card.Preview->BuildAppearance(Data);
-			Card.PreviewPivot->SetRelativeScale3D(FVector(PreviewHeight / FMath::Max(1.f, Data->Height)));
+			// Fit the mini alien on the card by height and by width (tails, spread arms).
+			const float ModelWidth = 2.f * FMath::Max(1.f, Card.Preview->GetModelRadius());
+			const float PreviewScale = FMath::Min(PreviewHeight / FMath::Max(1.f, Data->Height), PreviewWidth / ModelWidth);
+			Card.PreviewPivot->SetRelativeScale3D(FVector(PreviewScale));
 		}
 		else
 		{

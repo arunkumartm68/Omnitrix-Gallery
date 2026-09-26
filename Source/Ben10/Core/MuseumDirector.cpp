@@ -9,15 +9,86 @@
 #include "UI/AlienCollectionPanel.h"
 #include "Ben10.h"
 #include "Camera/PlayerCameraManager.h"
+#include "Components/LightComponent.h"
+#include "Engine/DirectionalLight.h"
 #include "Engine/World.h"
 #include "EngineUtils.h"
 #include "HeadMountedDisplayFunctionLibrary.h"
 #include "Kismet/GameplayStatics.h"
 #include "TimerManager.h"
 
+namespace
+{
+	/** A chamber's outer footprint on the floor plane plus its height range. */
+	struct FFootprint
+	{
+		FVector2D Center = FVector2D::ZeroVector;
+		FVector2D AxisX = FVector2D(1.0, 0.0);
+		FVector2D AxisY = FVector2D(0.0, 1.0);
+		FVector2D Half = FVector2D::ZeroVector;
+		double Bottom = 0.0;
+		double Top = 0.0;
+	};
+
+	FFootprint MakeFootprint(const FVector& FloorLocation, float Yaw, const FVector2D& Half, float Height)
+	{
+		FFootprint F;
+		const double Rad = FMath::DegreesToRadians(static_cast<double>(Yaw));
+		F.Center = FVector2D(FloorLocation.X, FloorLocation.Y);
+		F.AxisX = FVector2D(FMath::Cos(Rad), FMath::Sin(Rad));
+		F.AxisY = FVector2D(-FMath::Sin(Rad), FMath::Cos(Rad));
+		F.Half = Half;
+		F.Bottom = FloorLocation.Z;
+		F.Top = FloorLocation.Z + Height;
+		return F;
+	}
+
+	FFootprint MakeFootprint(const AAlienChamber* Chamber)
+	{
+		return MakeFootprint(Chamber->GetActorLocation(), Chamber->GetActorRotation().Yaw,
+			Chamber->GetFootprintHalfSize(), Chamber->GetTotalHeight());
+	}
+
+	/**
+	 * Separating-axis test of two rotated rectangles (and their height ranges). When they overlap,
+	 * OutPush is the shortest move that takes B out of A (plus Gap).
+	 */
+	bool FootprintsOverlap(const FFootprint& A, const FFootprint& B, FVector2D* OutPush = nullptr, double Gap = 0.0)
+	{
+		if (A.Top <= B.Bottom || B.Top <= A.Bottom)
+		{
+			return false; // one floats above the other
+		}
+		const FVector2D Delta = B.Center - A.Center;
+		double BestDepth = TNumericLimits<double>::Max();
+		FVector2D BestAxis = FVector2D::ZeroVector;
+		for (const FVector2D& Axis : { A.AxisX, A.AxisY, B.AxisX, B.AxisY })
+		{
+			const double RadiusA = A.Half.X * FMath::Abs(A.AxisX | Axis) + A.Half.Y * FMath::Abs(A.AxisY | Axis);
+			const double RadiusB = B.Half.X * FMath::Abs(B.AxisX | Axis) + B.Half.Y * FMath::Abs(B.AxisY | Axis);
+			const double Distance = Delta | Axis;
+			const double Depth = RadiusA + RadiusB + Gap - FMath::Abs(Distance);
+			if (Depth <= 0.0)
+			{
+				return false;
+			}
+			if (Depth < BestDepth)
+			{
+				BestDepth = Depth;
+				BestAxis = Distance >= 0.0 ? Axis : -Axis;
+			}
+		}
+		if (OutPush)
+		{
+			*OutPush = BestAxis * BestDepth;
+		}
+		return true;
+	}
+}
+
 AMuseumDirector::AMuseumDirector()
 {
-	PrimaryActorTick.bCanEverTick = false;
+	PrimaryActorTick.bCanEverTick = true; // only for the key light that follows the viewer
 
 	RootComponent = CreateDefaultSubobject<USceneComponent>(TEXT("Root"));
 	Scene = CreateDefaultSubobject<UMuseumSceneComponent>(TEXT("Scene"));
@@ -78,8 +149,44 @@ void AMuseumDirector::BeginPlay()
 		Panel->SetCollection(Collection);
 	}
 
+	// The key light that follows the viewer: the first movable directional light in the level.
+	for (TActorIterator<ADirectionalLight> It(GetWorld()); It; ++It)
+	{
+		ULightComponent* LightComponent = It->GetLightComponent();
+		if (LightComponent && LightComponent->Mobility == EComponentMobility::Movable)
+		{
+			KeyLight = *It;
+			break;
+		}
+	}
+	if (bKeyLightFollowsViewer && !KeyLight.IsValid())
+	{
+		UE_LOG(LogAlienMuseum, Warning, TEXT("No movable directional light found: the key light cannot follow the viewer"));
+	}
+
 	Scene->OnSceneReady.AddDynamic(this, &AMuseumDirector::HandleSceneReady);
 	Scene->StartScene();
+}
+
+void AMuseumDirector::Tick(float DeltaSeconds)
+{
+	Super::Tick(DeltaSeconds);
+	UpdateKeyLight(DeltaSeconds);
+}
+
+void AMuseumDirector::UpdateKeyLight(float DeltaSeconds)
+{
+	ADirectionalLight* Light = KeyLight.Get();
+	FVector Head;
+	FRotator View;
+	if (!bKeyLightFollowsViewer || !Light || !GetViewer(Head, View))
+	{
+		return;
+	}
+	// Shining the way the viewer looks = coming from behind them. Eased, so turning the head does
+	// not make the lighting jump.
+	const FRotator Target(-KeyLightElevation, View.Yaw + KeyLightSideAngle, 0.f);
+	Light->SetActorRotation(FMath::RInterpTo(Light->GetActorRotation(), Target, DeltaSeconds, 2.f));
 }
 
 void AMuseumDirector::HandleSceneReady(bool bDeviceScene)
@@ -150,6 +257,7 @@ void AMuseumDirector::RegisterChamber(AAlienChamber* Chamber)
 	}
 	Chambers.Add(Chamber);
 	Chamber->OnGrabbed.AddUniqueDynamic(this, &AMuseumDirector::HandleChamberGrabbed);
+	Chamber->OnResized.AddUniqueDynamic(this, &AMuseumDirector::HandleChamberResized);
 	Chamber->OnOccupantChanged.AddUniqueDynamic(this, &AMuseumDirector::HandleOccupantChanged);
 }
 
@@ -302,20 +410,27 @@ void AMuseumDirector::UpdateFloatingState(AAlienChamber* Chamber) const
 
 void AMuseumDirector::PushOutOfOtherChambers(AAlienChamber* Chamber) const
 {
-	for (const TObjectPtr<AAlienChamber>& Other : Chambers)
+	// Rectangles, not circles, so cases can stand side by side in a row. A few passes in case being
+	// pushed out of one chamber moves it into another. Floating chambers may be stacked.
+	for (int32 Pass = 0; Pass < 3; ++Pass)
 	{
-		if (!Other || Other == Chamber)
+		bool bMoved = false;
+		for (const TObjectPtr<AAlienChamber>& Other : Chambers)
 		{
-			continue;
+			if (!Other || Other == Chamber)
+			{
+				continue;
+			}
+			FVector2D Push;
+			if (FootprintsOverlap(MakeFootprint(Other), MakeFootprint(Chamber), &Push, 2.0))
+			{
+				Chamber->AddActorWorldOffset(FVector(Push.X, Push.Y, 0.0));
+				bMoved = true;
+			}
 		}
-		const FVector Delta = Chamber->GetActorLocation() - Other->GetActorLocation();
-		const float MinDistance = Chamber->GetOuterRadius() + Other->GetOuterRadius() + 2.f;
-		// Floating chambers may be stacked: they only collide if their heights overlap.
-		const bool bOverlapZ = Delta.Z < Other->GetTotalHeight() && -Delta.Z < Chamber->GetTotalHeight();
-		if (bOverlapZ && Delta.Size2D() < MinDistance)
+		if (!bMoved)
 		{
-			const FVector Direction = Delta.Size2D() > 1.f ? FVector(Delta.X, Delta.Y, 0.f).GetSafeNormal() : FVector::ForwardVector;
-			Chamber->SetActorLocation(Other->GetActorLocation() + Direction * MinDistance + FVector(0.f, 0.f, Delta.Z));
+			return;
 		}
 	}
 }
@@ -333,16 +448,15 @@ bool AMuseumDirector::CanAddChamber() const
 bool AMuseumDirector::IsPlacementFree(const FVector& FloorLocation, float Radius, const AAlienChamber* Ignore) const
 {
 	const AAlienChamber* Template = GetChamberTemplate();
-	const float NewHeight = Template ? Template->GetTotalHeight() : 80.f;
+	return IsFootprintFree(FloorLocation, 0.f, FVector(2.f * Radius, 2.f * Radius, Template ? Template->GetTotalHeight() : 120.f), Ignore);
+}
+
+bool AMuseumDirector::IsFootprintFree(const FVector& FloorLocation, float Yaw, const FVector& OuterSize, const AAlienChamber* Ignore) const
+{
+	const FFootprint New = MakeFootprint(FloorLocation, Yaw, FVector2D(OuterSize.X, OuterSize.Y) * 0.5, OuterSize.Z);
 	for (const TObjectPtr<AAlienChamber>& Chamber : Chambers)
 	{
-		if (!IsValid(Chamber) || Chamber == Ignore)
-		{
-			continue;
-		}
-		const FVector Delta = FloorLocation - Chamber->GetActorLocation();
-		const bool bOverlapZ = Delta.Z < Chamber->GetTotalHeight() && -Delta.Z < NewHeight;
-		if (bOverlapZ && Delta.Size2D() < Radius + Chamber->GetOuterRadius())
+		if (IsValid(Chamber) && Chamber != Ignore && FootprintsOverlap(MakeFootprint(Chamber), New))
 		{
 			return false;
 		}
@@ -371,6 +485,15 @@ TArray<AAlienChamber*> AMuseumDirector::GetChambers() const
 void AMuseumDirector::HandleChamberGrabbed(AAlienChamber* Chamber)
 {
 	Persistence->ReleaseAnchor(Chamber);
+}
+
+void AMuseumDirector::HandleChamberResized(AAlienChamber* Chamber)
+{
+	// The base did not move, so the spatial anchor stays valid: only the saved size changes.
+	if (Chamber && !Chamber->IsBeingGrabbed())
+	{
+		Persistence->CommitChamber(Chamber);
+	}
 }
 
 void AMuseumDirector::HandleOccupantChanged(AAlienChamber* Chamber)

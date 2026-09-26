@@ -1,12 +1,12 @@
-// Alien Museum - builds and animates the placeholder alien body from an AlienDataAsset.
+// Alien Museum - builds and animates the alien body from an AlienDataAsset.
 //
-// The body is made of engine basic shapes (spheres, cylinders, cones, cubes), so there is no
-// imported art. It is either one of the built-in shapes (Blob / Tall / Squat) or fully described by
-// the data asset's Parts list (BodyShape = Custom). Animation is procedural (bob, squash & stretch,
-// walk swing, head look-at, blink, wing flaps, flame flicker), which is far cheaper on Quest than
-// skeletal meshes + animation blueprints.
-// When real alien art exists, give the AAlienCharacter a skeletal mesh instead; this component
-// then stays empty.
+// The body is either the data asset's imported model (ModelMesh: one static mesh, scaled to the
+// alien's height and stood on its feet) or made of engine basic shapes (spheres, cylinders, cones,
+// cubes): one of the built-in shapes (Blob / Tall / Squat) or fully described by the Parts list
+// (BodyShape = Custom). Animation is procedural (bob, squash & stretch, walk waddle / swing, head
+// look-at, blink, wing flaps, flame flicker), which is far cheaper on Quest than skeletal meshes +
+// animation blueprints.
+// A Blueprint subclass of AAlienCharacter with a skeletal mesh also works; this component then stays empty.
 
 #pragma once
 
@@ -59,7 +59,13 @@ public:
 	/** Radius for the collision capsule at scale 1 (cm). */
 	float GetCollisionRadius() const { return CollisionRadius; }
 
+	/** Radius of the fake contact shadow at scale 1 (cm): the feet area, not outstretched arms. */
+	float GetShadowRadius() const { return ShadowRadius; }
+
 	bool HasParts() const { return Parts.Num() > 0; }
+
+	/** True when the body is an imported model rather than basic shapes. */
+	bool IsModel() const { return bIsModel; }
 
 	/** Optional material overrides (default: /Game/AlienMuseum/Materials). */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Alien")
@@ -89,6 +95,7 @@ private:
 
 	void CreateMaterials(const UAlienDataAsset* Data);
 	void BuildBuiltInBody(const UAlienDataAsset* Data);
+	void BuildModelBody(const UAlienDataAsset* Data, UStaticMesh* Mesh);
 	void AddDataPart(const FAlienBodyPart& Part, bool bMirrored);
 	UMaterialInterface* GetPartMaterial(const FAlienBodyPart& Part);
 	UStaticMesh* GetShapeMesh(EAlienPartShape Shape) const;
@@ -142,7 +149,9 @@ private:
 	float ModelHeight = 32.f;
 	float ModelRadius = 10.f;
 	float CollisionRadius = 8.f;
+	float ShadowRadius = 10.f;
 	float Energy = 0.5f;
+	bool bIsModel = false;
 	bool bHovers = false;
 	float HoverHeight = 0.f;
 	FVector2D HeadBaseXY = FVector2D::ZeroVector;

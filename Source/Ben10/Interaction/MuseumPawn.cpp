@@ -458,11 +458,23 @@ void AMuseumPawn::HandleSelect(UMuseumHandInteractor* Hand, bool bPressed)
 {
 	if (!bPressed)
 	{
+		const FHandResize& Resize = GetResize(Hand);
+		if (Resize.Chamber.IsValid() && Resize.bFromSelect)
+		{
+			EndResize(Hand);
+			return;
+		}
 		const FHandGrab& Grab = GetGrab(Hand);
 		if (Grab.Chamber.IsValid() && Grab.bFromSelect)
 		{
 			EndGrab(Hand);
 		}
+		return;
+	}
+
+	// A chamber's resize handle (at the hand or under the ray): drag it.
+	if (Mode == EMuseumPawnMode::Default && TryBeginResize(Hand, true))
+	{
 		return;
 	}
 
@@ -497,10 +509,20 @@ void AMuseumPawn::HandleGrab(UMuseumHandInteractor* Hand, bool bPressed)
 {
 	if (bPressed)
 	{
+		if (Mode == EMuseumPawnMode::Default && TryBeginResize(Hand, false))
+		{
+			return;
+		}
 		TryBeginGrab(Hand, false);
 	}
 	else
 	{
+		const FHandResize& Resize = GetResize(Hand);
+		if (Resize.Chamber.IsValid() && !Resize.bFromSelect)
+		{
+			EndResize(Hand);
+			return;
+		}
 		const FHandGrab& Grab = GetGrab(Hand);
 		if (Grab.Chamber.IsValid() && !Grab.bFromSelect)
 		{
@@ -509,10 +531,112 @@ void AMuseumPawn::HandleGrab(UMuseumHandInteractor* Hand, bool bPressed)
 	}
 }
 
+AMuseumPawn::FHandResize& AMuseumPawn::GetResize(const UMuseumHandInteractor* Hand)
+{
+	return Hand == LeftHand ? LeftResize : RightResize;
+}
+
+bool AMuseumPawn::TryBeginResize(UMuseumHandInteractor* Hand, bool bFromSelect)
+{
+	FHandResize& Resize = GetResize(Hand);
+	if (Resize.Chamber.IsValid() || GetGrab(Hand).Chamber.IsValid())
+	{
+		return false;
+	}
+
+	AAlienChamber* Chamber = nullptr;
+	UPrimitiveComponent* Handle = nullptr;
+	bool bNear = false;
+
+	// Hand tracking: pinching right at a handle knob.
+	if (AMuseumDirector* Director = GetDirector())
+	{
+		for (AAlienChamber* Candidate : Director->GetChambers())
+		{
+			if (UPrimitiveComponent* Near = Candidate->FindResizeHandleNear(Hand->GetGrabLocation(), NearGrabDistance * 0.75f))
+			{
+				Chamber = Candidate;
+				Handle = Near;
+				bNear = true;
+				break;
+			}
+		}
+	}
+	// Otherwise the handle under the ray.
+	if (!Handle)
+	{
+		const FMuseumPointerHit& Hit = Hand->GetPointerHit();
+		Chamber = Cast<AAlienChamber>(Hit.Actor.Get());
+		Handle = Hit.Component.Get();
+		if (!Chamber || Chamber->GetResizeAxis(Handle) == EChamberResizeAxis::None)
+		{
+			return false;
+		}
+		Resize.RayDistance = Hit.Distance;
+	}
+	if (Chamber->IsBeingGrabbed() || Chamber->IsBeingResized())
+	{
+		return false;
+	}
+
+	if (Mode != EMuseumPawnMode::Default)
+	{
+		SetMode(EMuseumPawnMode::Default);
+	}
+	Resize.Chamber = Chamber;
+	Resize.Handle = Handle;
+	Resize.bNear = bNear;
+	Resize.bFromSelect = bFromSelect;
+	Resize.Direction = Chamber->GetResizeDirection(Handle);
+	Resize.StartPoint = GetResizePoint(Hand, Resize);
+	Chamber->BeginResize(Handle);
+	return true;
+}
+
+FVector AMuseumPawn::GetResizePoint(const UMuseumHandInteractor* Hand, const FHandResize& Resize) const
+{
+	// Ray drags keep the grabbed point at the same distance along the ray, like carrying a chamber.
+	return Resize.bNear ? Hand->GetGrabLocation() : Hand->GetAimOrigin() + Hand->GetAimDirection() * Resize.RayDistance;
+}
+
+void AMuseumPawn::UpdateResizes()
+{
+	for (UMuseumHandInteractor* Hand : { LeftHand.Get(), RightHand.Get() })
+	{
+		FHandResize& Resize = GetResize(Hand);
+		AAlienChamber* Chamber = Resize.Chamber.Get();
+		if (!Chamber)
+		{
+			continue;
+		}
+		if (!Hand->IsTracked())
+		{
+			EndResize(Hand);
+			continue;
+		}
+		const FVector Point = GetResizePoint(Hand, Resize);
+		Chamber->UpdateResize(FVector::DotProduct(Point - Resize.StartPoint, Resize.Direction));
+		if (!Resize.bNear)
+		{
+			Hand->SetLaserOverride(Point, ValidColor);
+		}
+	}
+}
+
+void AMuseumPawn::EndResize(UMuseumHandInteractor* Hand)
+{
+	FHandResize& Resize = GetResize(Hand);
+	if (AAlienChamber* Chamber = Resize.Chamber.Get())
+	{
+		Chamber->EndResize();
+	}
+	Resize = FHandResize();
+}
+
 bool AMuseumPawn::TryBeginGrab(UMuseumHandInteractor* Hand, bool bFromSelect)
 {
 	FHandGrab& Grab = GetGrab(Hand);
-	if (Grab.Chamber.IsValid())
+	if (Grab.Chamber.IsValid() || GetResize(Hand).Chamber.IsValid())
 	{
 		return false;
 	}
@@ -522,7 +646,7 @@ bool AMuseumPawn::TryBeginGrab(UMuseumHandInteractor* Hand, bool bFromSelect)
 	{
 		Target = Cast<AAlienChamber>(Hand->GetPointerHit().Actor.Get());
 	}
-	if (!Target)
+	if (!Target || Target->IsBeingResized())
 	{
 		return false;
 	}
@@ -680,7 +804,7 @@ void AMuseumPawn::UpdateHover()
 		UMuseumHandInteractor* Hand = Hands[i];
 		AActor* NewActor = nullptr;
 		UPrimitiveComponent* NewComponent = nullptr;
-		if (Hand->IsTracked() && !GetGrab(Hand).Chamber.IsValid())
+		if (Hand->IsTracked() && !GetGrab(Hand).Chamber.IsValid() && !GetResize(Hand).Chamber.IsValid())
 		{
 			NewActor = Hand->GetPointerHit().Actor.Get();
 			NewComponent = Hand->GetPointerHit().Component.Get();
@@ -748,8 +872,8 @@ void AMuseumPawn::UpdatePlacement(float DeltaSeconds)
 	// Otherwise: where a new chamber would go. A real surface under the ray wins; with floating
 	// chambers, pointing into open space puts it in mid-air FloatPlacementDistance along the ray.
 	const AAlienChamber* Template = Director->GetChamberTemplate();
-	const float HalfWidth = Template ? Template->GetHalfWidth() : 33.f;
-	const float Height = Template ? Template->GetTotalHeight() : 72.f;
+	const FVector CaseSize = Template ? Template->GetOuterSize() : FVector(70.f, 86.f, 121.f); // depth, width, height
+	const float Height = static_cast<float>(CaseSize.Z);
 	const FVector Origin = Hand->GetAimOrigin();
 	const FVector Direction = Hand->GetAimDirection();
 
@@ -779,10 +903,12 @@ void AMuseumPawn::UpdatePlacement(float DeltaSeconds)
 		bShowGhost = true;
 	}
 
+	// The new chamber will face the viewer.
+	const float Yaw = (GetHeadLocation() - PlacementLocation).Rotation().Yaw;
 	bPlacementSpotOk = bPlacementInAir || PlacementHit.IsPlaceable();
 	bPlacementValid = bPlacementSpotOk
 		&& Director->CanAddChamber()
-		&& Director->IsPlacementFree(PlacementLocation, HalfWidth + 3.f, nullptr);
+		&& Director->IsFootprintFree(PlacementLocation, Yaw, CaseSize + FVector(4.f, 4.f, 0.f), nullptr);
 
 	const FLinearColor Color = bPlacementValid ? ValidColor : InvalidColor;
 	Hand->SetLaserOverride(LaserEnd, bShowGhost ? Color : InvalidColor);
@@ -798,9 +924,8 @@ void AMuseumPawn::UpdatePlacement(float DeltaSeconds)
 	{
 		PlacementGhost->SetStaticMesh(GhostMesh);
 	}
-	const float Yaw = (GetHeadLocation() - PlacementLocation).Rotation().Yaw;
 	PlacementGhost->SetVisibility(true);
-	PlacementGhost->SetWorldScale3D(FVector(2.f * HalfWidth, 2.f * HalfWidth, Height) / 100.f);
+	PlacementGhost->SetWorldScale3D(CaseSize / 100.f);
 	PlacementGhost->SetWorldLocationAndRotation(PlacementLocation + FVector(0.f, 0.f, Height * 0.5f), FRotator(0.f, Yaw, 0.f));
 	if (GhostMID)
 	{
@@ -878,6 +1003,7 @@ void AMuseumPawn::Tick(float DeltaSeconds)
 		RightHand->SetDesktopRay(Camera->GetComponentLocation(), Camera->GetForwardVector());
 	}
 
+	UpdateResizes();
 	UpdateGrabs(DeltaSeconds);
 	UpdateHover();
 	UpdatePlacement(DeltaSeconds);

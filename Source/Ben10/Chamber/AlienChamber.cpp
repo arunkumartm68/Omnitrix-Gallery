@@ -1,4 +1,4 @@
-// Alien Museum - a glass museum pod that holds one alien.
+// Alien Museum - a glass museum case that holds one alien.
 
 #include "Chamber/AlienChamber.h"
 #include "Aliens/AlienCharacter.h"
@@ -9,6 +9,7 @@
 #include "Components/CapsuleComponent.h"
 #include "Components/InstancedStaticMeshComponent.h"
 #include "Components/PointLightComponent.h"
+#include "Components/SphereComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Components/TextRenderComponent.h"
 #include "Camera/PlayerCameraManager.h"
@@ -22,7 +23,9 @@
 namespace
 {
 	constexpr int32 NumWalls = 8;
-	constexpr float FrameInset = 3.f; // metal rim beyond the glass radius
+	constexpr float FrameInset = 3.f;   // metal rim beyond the glass
+	constexpr float HandleGap = 8.f;    // resize handles float this far outside the frame
+	constexpr float MoveInset = 3.f;    // walkable floor stops this far inside the glass
 
 	FVector ShapeScale(float SizeX, float SizeY, float SizeZ)
 	{
@@ -38,6 +41,19 @@ namespace
 		Component->SetCollisionResponseToChannel(ECC_Pawn, ECR_Block);
 		Component->SetCanEverAffectNavigation(false);
 		Component->SetGenerateOverlapEvents(false);
+	}
+
+	/** Something the pointer ray can hit (Visibility channel only). */
+	void MakePointerTarget(UPrimitiveComponent* Component)
+	{
+		Component->SetMobility(EComponentMobility::Movable);
+		Component->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
+		Component->SetCollisionObjectType(ECC_WorldDynamic);
+		Component->SetCollisionResponseToAllChannels(ECR_Ignore);
+		Component->SetCollisionResponseToChannel(ECC_Visibility, ECR_Block);
+		Component->SetCanEverAffectNavigation(false);
+		Component->SetGenerateOverlapEvents(false);
+		Component->SetHiddenInGame(true);
 	}
 
 	/** Word-wraps a description for a TextRender (which has no automatic wrapping). */
@@ -101,7 +117,7 @@ AAlienChamber::AAlienChamber()
 		return Comp;
 	};
 
-	// Base: the alien stands on it, so it blocks everything. (Square is the default look;
+	// Base: the alien stands on it, so it blocks everything. (Box is the default look;
 	// BuildLayout swaps the meshes when Shape is Round.)
 	Base = MakeMesh(TEXT("Base"), CubeFinder.Object, Root);
 	Base->SetCollisionProfileName(UCollisionProfile::BlockAllDynamic_ProfileName);
@@ -113,7 +129,7 @@ AAlienChamber::AAlienChamber()
 	LightPanel = MakeMesh(TEXT("LightPanel"), CubeFinder.Object, Root);
 
 	// Anti-gravity glow under the base, shown while the chamber floats in the air.
-	HoverGlow = MakeMesh(TEXT("HoverGlow"), CylinderFinder.Object, Root);
+	HoverGlow = MakeMesh(TEXT("HoverGlow"), CubeFinder.Object, Root);
 	HoverGlow->SetVisibility(false);
 
 	FramePillars = CreateDefaultSubobject<UInstancedStaticMeshComponent>(TEXT("FramePillars"));
@@ -153,17 +169,41 @@ AAlienChamber::AAlienChamber()
 	SpawnPoint->SetupAttachment(Root);
 	SpawnPoint->SetMobility(EComponentMobility::Movable);
 
-	// What the pointer ray hits (Visibility channel only). Property and component are named
-	// "SelectBox" because older saved Blueprints hold a capsule under the previous name "SelectVolume".
+	// What the pointer ray hits. Property and component are named "SelectBox" because older saved
+	// Blueprints hold a capsule under the previous name "SelectVolume".
 	SelectBox = CreateDefaultSubobject<UBoxComponent>(TEXT("SelectBox"));
 	SelectBox->SetupAttachment(Root);
-	SelectBox->SetMobility(EComponentMobility::Movable);
-	SelectBox->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
-	SelectBox->SetCollisionObjectType(ECC_WorldDynamic);
-	SelectBox->SetCollisionResponseToAllChannels(ECR_Ignore);
-	SelectBox->SetCollisionResponseToChannel(ECC_Visibility, ECR_Block);
-	SelectBox->SetCanEverAffectNavigation(false);
-	SelectBox->SetHiddenInGame(true);
+	MakePointerTarget(SelectBox);
+
+	// Resize handles: top = height, left/right = width, base front = depth. Each is a knob with two
+	// arrows; an invisible sphere around it is what the pointer hits.
+	const EChamberResizeAxis HandleAxes[] = { EChamberResizeAxis::Height, EChamberResizeAxis::Width, EChamberResizeAxis::Width, EChamberResizeAxis::Depth };
+	const float HandleSides[] = { 1.f, 1.f, -1.f, 1.f };
+	for (int32 i = 0; i < static_cast<int32>(UE_ARRAY_COUNT(HandleAxes)); ++i)
+	{
+		FChamberResizeHandle Handle;
+		Handle.Axis = HandleAxes[i];
+		Handle.Side = HandleSides[i];
+		Handle.Hit = CreateDefaultSubobject<USphereComponent>(*FString::Printf(TEXT("ResizeHandle%d"), i));
+		Handle.Hit->SetupAttachment(Root);
+		Handle.Hit->InitSphereRadius(6.f);
+		MakePointerTarget(Handle.Hit);
+		Handle.Hit->SetCollisionEnabled(ECollisionEnabled::NoCollision); // enabled while the handles are shown
+		Handle.Knob = MakeMesh(*FString::Printf(TEXT("ResizeKnob%d"), i), SphereFinder.Object, Handle.Hit);
+		Handle.Knob->SetRelativeScale3D(FVector(0.045f));
+		Handle.ArrowOut = MakeMesh(*FString::Printf(TEXT("ResizeArrowOut%d"), i), ConeFinder.Object, Handle.Hit);
+		Handle.ArrowIn = MakeMesh(*FString::Printf(TEXT("ResizeArrowIn%d"), i), ConeFinder.Object, Handle.Hit);
+		for (UStaticMeshComponent* Arrow : { Handle.ArrowOut.Get(), Handle.ArrowIn.Get() })
+		{
+			Arrow->SetRelativeScale3D(ShapeScale(2.6f, 2.6f, 3.2f));
+		}
+		for (UStaticMeshComponent* Part : { Handle.Knob.Get(), Handle.ArrowOut.Get(), Handle.ArrowIn.Get() })
+		{
+			Part->SetVisibility(false);
+			Part->SetTranslucentSortPriority(4);
+		}
+		ResizeHandles.Add(Handle);
+	}
 
 	InteriorLight = CreateDefaultSubobject<UPointLightComponent>(TEXT("InteriorLight"));
 	InteriorLight->SetupAttachment(Root);
@@ -178,30 +218,30 @@ AAlienChamber::AAlienChamber()
 
 	InfoBackground = MakeMesh(TEXT("InfoBackground"), PlaneFinder.Object, InfoRoot);
 	InfoBackground->SetRelativeRotation(FRotator(-90.f, 0.f, 0.f)); // plane normal +Z -> +X (towards the viewer)
-	InfoBackground->SetRelativeScale3D(FVector(0.18f, 0.42f, 1.f));    // 18 cm tall, 42 cm wide
+	InfoBackground->SetRelativeScale3D(FVector(0.20f, 0.42f, 1.f));    // 20 cm tall, 42 cm wide
 	InfoBackground->SetTranslucentSortPriority(3);
 
-	InfoTitle = CreateDefaultSubobject<UTextRenderComponent>(TEXT("InfoTitle"));
-	InfoTitle->SetupAttachment(InfoRoot);
-	InfoTitle->SetMobility(EComponentMobility::Movable);
-	InfoTitle->SetHorizontalAlignment(EHTA_Center);
-	InfoTitle->SetVerticalAlignment(EVRTA_TextCenter);
-	InfoTitle->SetWorldSize(3.0f);
-	InfoTitle->SetTextRenderColor(FColor(170, 240, 255));
-	InfoTitle->SetRelativeLocation(FVector(0.5f, 0.f, 5.2f));
-	InfoTitle->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-	InfoTitle->SetCastShadow(false);
-
-	InfoBody = CreateDefaultSubobject<UTextRenderComponent>(TEXT("InfoBody"));
-	InfoBody->SetupAttachment(InfoRoot);
-	InfoBody->SetMobility(EComponentMobility::Movable);
-	InfoBody->SetHorizontalAlignment(EHTA_Center);
-	InfoBody->SetVerticalAlignment(EVRTA_TextCenter);
-	InfoBody->SetWorldSize(1.55f);
-	InfoBody->SetTextRenderColor(FColor(220, 245, 255));
+	auto MakeText = [this](const TCHAR* Name, USceneComponent* Parent, float WorldSize, const FColor& Color)
+	{
+		UTextRenderComponent* Text = CreateDefaultSubobject<UTextRenderComponent>(Name);
+		Text->SetupAttachment(Parent);
+		Text->SetMobility(EComponentMobility::Movable);
+		Text->SetHorizontalAlignment(EHTA_Center);
+		Text->SetVerticalAlignment(EVRTA_TextCenter);
+		Text->SetWorldSize(WorldSize);
+		Text->SetTextRenderColor(Color);
+		Text->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+		Text->SetCastShadow(false);
+		return Text;
+	};
+	InfoTitle = MakeText(TEXT("InfoTitle"), InfoRoot, 3.0f, FColor(170, 240, 255));
+	InfoTitle->SetRelativeLocation(FVector(0.5f, 0.f, 6.2f));
+	InfoBody = MakeText(TEXT("InfoBody"), InfoRoot, 1.55f, FColor(220, 245, 255));
 	InfoBody->SetRelativeLocation(FVector(0.5f, 0.f, -2.2f));
-	InfoBody->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-	InfoBody->SetCastShadow(false);
+
+	SizeLabel = MakeText(TEXT("SizeLabel"), Root, 3.0f, FColor(190, 250, 255));
+	SizeLabel->SetVerticalAlignment(EVRTA_TextBottom);
+	SizeLabel->SetVisibility(false);
 
 	DefaultAlienClass = AAlienCharacter::StaticClass();
 }
@@ -219,16 +259,28 @@ void AAlienChamber::OnConstruction(const FTransform& Transform)
 	SetInfoPanelVisible(bInfoVisible);
 }
 
+FVector2f AAlienChamber::GetInnerHalfLocal() const
+{
+	return Shape == EChamberShape::Round ? FVector2f(Width * 0.5f) : FVector2f(Depth * 0.5f, Width * 0.5f);
+}
+
+FVector2f AAlienChamber::GetMoveHalfLocal() const
+{
+	const FVector2f Half = GetInnerHalfLocal();
+	return FVector2f(FMath::Max(0.f, Half.X - MoveInset), FMath::Max(0.f, Half.Y - MoveInset));
+}
+
 void AAlienChamber::BuildLayout()
 {
-	const bool bSquare = Shape == EChamberShape::Square;
-	const float R = Radius;
+	const bool bBox = Shape == EChamberShape::Square;
+	const FVector2f Half = GetInnerHalfLocal();
+	const FVector2f Inner = Half * 2.f;
+	const FVector2f Outer = (Half + FVector2f(FrameInset)) * 2.f;
 	const float TopZ = BaseHeight + GlassHeight;
-	const float OuterD = 2.f * (R + FrameInset);
 
-	// Square display case or round pod: same parts, different basic shape.
-	UStaticMesh* ShellMesh = bSquare ? CubeMesh.Get() : CylinderMesh.Get();
-	for (UStaticMeshComponent* Part : { Base.Get(), FloorGlow.Get(), Glass.Get(), TopCap.Get(), LightPanel.Get() })
+	// Rectangular display case or round pod: same parts, different basic shape.
+	UStaticMesh* ShellMesh = bBox ? CubeMesh.Get() : CylinderMesh.Get();
+	for (UStaticMeshComponent* Part : { Base.Get(), FloorGlow.Get(), Glass.Get(), TopCap.Get(), LightPanel.Get(), HoverGlow.Get() })
 	{
 		if (ShellMesh && Part->GetStaticMesh() != ShellMesh)
 		{
@@ -241,37 +293,42 @@ void AAlienChamber::BuildLayout()
 	}
 
 	Base->SetRelativeLocation(FVector(0.f, 0.f, BaseHeight * 0.5f));
-	Base->SetRelativeScale3D(ShapeScale(OuterD, OuterD, BaseHeight));
+	Base->SetRelativeScale3D(ShapeScale(Outer.X, Outer.Y, BaseHeight));
 
 	FloorGlow->SetRelativeLocation(FVector(0.f, 0.f, BaseHeight + 0.2f));
-	FloorGlow->SetRelativeScale3D(ShapeScale(2.f * R - 4.f, 2.f * R - 4.f, 0.4f));
+	FloorGlow->SetRelativeScale3D(ShapeScale(Inner.X - 4.f, Inner.Y - 4.f, 0.4f));
 
 	Glass->SetRelativeLocation(FVector(0.f, 0.f, BaseHeight + GlassHeight * 0.5f));
-	Glass->SetRelativeScale3D(ShapeScale(2.f * R, 2.f * R, GlassHeight));
+	Glass->SetRelativeScale3D(ShapeScale(Inner.X, Inner.Y, GlassHeight));
 
 	TopCap->SetRelativeLocation(FVector(0.f, 0.f, TopZ + 3.f));
-	TopCap->SetRelativeScale3D(ShapeScale(OuterD, OuterD, 6.f));
+	TopCap->SetRelativeScale3D(ShapeScale(Outer.X, Outer.Y, 6.f));
 
 	LightPanel->SetRelativeLocation(FVector(0.f, 0.f, TopZ - 0.6f));
-	LightPanel->SetRelativeScale3D(ShapeScale(2.f * R - 10.f, 2.f * R - 10.f, 1.f));
+	LightPanel->SetRelativeScale3D(ShapeScale(Inner.X - 10.f, Inner.Y - 10.f, 1.f));
 
-	// Four frame posts, one draw call: square corner posts or round pillars.
+	// Four frame posts, one draw call: corner posts of the box or round pillars.
 	if (!IsTemplate())
 	{
 		FramePillars->ClearInstances();
 		for (int32 i = 0; i < 4; ++i)
 		{
-			const float Angle = FMath::DegreesToRadians(45.f + 90.f * i);
-			const float Distance = bSquare ? (R + 1.5f) * UE_SQRT_2 : R + 1.5f; // square: exactly on the corners
-			const FVector Location(FMath::Cos(Angle) * Distance, FMath::Sin(Angle) * Distance, BaseHeight + GlassHeight * 0.5f);
-			FramePillars->AddInstance(FTransform(FQuat::Identity, Location, ShapeScale(3.f, 3.f, GlassHeight)));
+			FVector2f Corner;
+			if (bBox)
+			{
+				Corner = FVector2f((i & 1) ? -(Half.X + 1.5f) : Half.X + 1.5f, (i & 2) ? -(Half.Y + 1.5f) : Half.Y + 1.5f);
+			}
+			else
+			{
+				const float Angle = FMath::DegreesToRadians(45.f + 90.f * i);
+				Corner = FVector2f(FMath::Cos(Angle), FMath::Sin(Angle)) * (Half.X + 1.5f);
+			}
+			FramePillars->AddInstance(FTransform(FQuat::Identity, FVector(Corner.X, Corner.Y, BaseHeight + GlassHeight * 0.5f), ShapeScale(3.f, 3.f, GlassHeight)));
 		}
 	}
 
-	// Invisible walls just inside the glass: 4 for a square case, an octagon for a round pod.
-	const float Apothem = R - 1.f;
-	const int32 ActiveWalls = bSquare ? 4 : NumWalls;
-	const float HalfSide = bSquare ? R + 1.f : Apothem * FMath::Tan(FMath::DegreesToRadians(180.f / NumWalls)) + 1.f;
+	// Invisible walls just inside the glass: one per side of the box, an octagon for a round pod.
+	const int32 ActiveWalls = bBox ? 4 : NumWalls;
 	for (int32 i = 0; i < ContainmentWalls.Num(); ++i)
 	{
 		UBoxComponent* Wall = ContainmentWalls[i];
@@ -282,42 +339,85 @@ void AAlienChamber::BuildLayout()
 			continue;
 		}
 		const float AngleDeg = 360.f / ActiveWalls * i;
+		float Apothem;
+		float HalfLength;
+		if (bBox)
+		{
+			const bool bFrontBack = (i % 2) == 0; // walls 0 / 2 face +X / -X
+			Apothem = (bFrontBack ? Half.X : Half.Y) - 1.f;
+			HalfLength = (bFrontBack ? Half.Y : Half.X) + 1.f;
+		}
+		else
+		{
+			Apothem = Half.X - 1.f;
+			HalfLength = Apothem * FMath::Tan(FMath::DegreesToRadians(180.f / NumWalls)) + 1.f;
+		}
 		const float Angle = FMath::DegreesToRadians(AngleDeg);
-		Wall->SetBoxExtent(FVector(1.f, HalfSide, GlassHeight * 0.5f));
+		Wall->SetBoxExtent(FVector(1.f, HalfLength, GlassHeight * 0.5f));
 		Wall->SetRelativeLocation(FVector(FMath::Cos(Angle) * Apothem, FMath::Sin(Angle) * Apothem, BaseHeight + GlassHeight * 0.5f));
 		Wall->SetRelativeRotation(FRotator(0.f, AngleDeg, 0.f));
 	}
-	Ceiling->SetBoxExtent(FVector(R, R, 1.f));
+	Ceiling->SetBoxExtent(FVector(Half.X, Half.Y, 1.f));
 	Ceiling->SetRelativeLocation(FVector(0.f, 0.f, TopZ));
 
-	// Obstacles for the alien to walk around.
-	ObstacleRock->SetRelativeLocation(FVector(-0.45f * R, 0.42f * R, BaseHeight + 1.5f));
-	ObstacleRock->SetRelativeScale3D(ShapeScale(0.34f * R, 0.28f * R, 0.20f * R));
-	ObstacleCrystal->SetRelativeLocation(FVector(0.42f * R, -0.45f * R, BaseHeight + 0.2f * R));
-	ObstacleCrystal->SetRelativeScale3D(ShapeScale(0.16f * R, 0.16f * R, 0.40f * R));
+	// Optional obstacles for the alien to walk around.
+	const float Small = FMath::Min(Half.X, Half.Y);
+	ObstacleRock->SetRelativeLocation(FVector(-0.45f * Half.X, 0.42f * Half.Y, BaseHeight + 1.5f));
+	ObstacleRock->SetRelativeScale3D(ShapeScale(0.34f * Small, 0.28f * Small, 0.20f * Small));
+	ObstacleCrystal->SetRelativeLocation(FVector(0.42f * Half.X, -0.45f * Half.Y, BaseHeight + 0.2f * Small));
+	ObstacleCrystal->SetRelativeScale3D(ShapeScale(0.16f * Small, 0.16f * Small, 0.40f * Small));
 	ObstacleRock->SetVisibility(bShowObstacles);
 	ObstacleCrystal->SetVisibility(bShowObstacles);
 	ObstacleRock->SetCollisionEnabled(bShowObstacles ? ECollisionEnabled::QueryAndPhysics : ECollisionEnabled::NoCollision);
 	ObstacleCrystal->SetCollisionEnabled(bShowObstacles ? ECollisionEnabled::QueryAndPhysics : ECollisionEnabled::NoCollision);
 
-	const float MoveR = GetMovementRadiusLocal();
-	MovementBounds->SetBoxExtent(FVector(MoveR, MoveR, GlassHeight * 0.5f));
+	const FVector2f Move = GetMoveHalfLocal();
+	MovementBounds->SetBoxExtent(FVector(Move.X, Move.Y, GlassHeight * 0.5f));
 	MovementBounds->SetRelativeLocation(FVector(0.f, 0.f, BaseHeight + GlassHeight * 0.5f));
 
 	SpawnPoint->SetRelativeLocation(FVector(0.f, 0.f, BaseHeight + 0.5f));
 
-	SelectBox->SetBoxExtent(FVector(R + FrameInset + 2.f, R + FrameInset + 2.f, (TopZ + 6.f) * 0.5f + 2.f));
+	SelectBox->SetBoxExtent(FVector(Half.X + FrameInset + 2.f, Half.Y + FrameInset + 2.f, (TopZ + 6.f) * 0.5f + 2.f));
 	SelectBox->SetRelativeLocation(FVector(0.f, 0.f, (TopZ + 6.f) * 0.5f));
 
 	HoverGlow->SetRelativeLocation(FVector(0.f, 0.f, -0.6f));
-	HoverGlow->SetRelativeScale3D(ShapeScale(OuterD * 0.8f, OuterD * 0.8f, 0.6f));
+	HoverGlow->SetRelativeScale3D(ShapeScale(Outer.X * 0.8f, Outer.Y * 0.8f, 0.6f));
 
 	InteriorLight->SetRelativeLocation(FVector(0.f, 0.f, TopZ - 8.f));
-	InteriorLight->SetAttenuationRadius(R * 2.5f);
+	InteriorLight->SetAttenuationRadius(FMath::Max(Half.X, Half.Y) * 2.5f);
 	InteriorLight->SetLightColor(ActiveLightColor);
 	InteriorLight->SetVisibility(bUseRealInteriorLight);
 
 	InfoRoot->SetRelativeLocation(FVector(0.f, 0.f, TopZ + 22.f));
+
+	LayoutResizeHandles(Half, TopZ);
+}
+
+void AAlienChamber::LayoutResizeHandles(const FVector2f& Half, float TopZ)
+{
+	for (FChamberResizeHandle& Handle : ResizeHandles)
+	{
+		FVector Location = FVector::ZeroVector;
+		FVector Direction = FVector::UpVector;
+		switch (Handle.Axis)
+		{
+		case EChamberResizeAxis::Width:
+			Direction = FVector(0.f, Handle.Side, 0.f);
+			Location = FVector(0.f, Handle.Side * (Half.Y + FrameInset + HandleGap), BaseHeight + GlassHeight * 0.5f);
+			break;
+		case EChamberResizeAxis::Depth:
+			Direction = FVector(Handle.Side, 0.f, 0.f);
+			Location = FVector(Handle.Side * (Half.X + FrameInset + HandleGap), 0.f, BaseHeight * 0.5f);
+			break;
+		case EChamberResizeAxis::Height:
+		default:
+			Location = FVector(0.f, 0.f, TopZ + 6.f + HandleGap);
+			break;
+		}
+		Handle.Hit->SetRelativeLocation(Location);
+		Handle.ArrowOut->SetRelativeLocationAndRotation(Direction * 5.f, FRotationMatrix::MakeFromZ(Direction).Rotator());
+		Handle.ArrowIn->SetRelativeLocationAndRotation(-Direction * 5.f, FRotationMatrix::MakeFromZ(-Direction).Rotator());
+	}
 }
 
 void AAlienChamber::ApplyMaterials()
@@ -333,9 +433,18 @@ void AAlienChamber::ApplyMaterials()
 	GlassMID = GlassBase ? UMaterialInstanceDynamic::Create(GlassBase, this) : nullptr;
 	HologramMID = HologramBase ? UMaterialInstanceDynamic::Create(HologramBase, this) : nullptr;
 	HoverMID = EmissiveBase ? UMaterialInstanceDynamic::Create(EmissiveBase, this) : nullptr;
+	HandleMID = EmissiveBase ? UMaterialInstanceDynamic::Create(EmissiveBase, this) : nullptr;
+	HandleHotMID = EmissiveBase ? UMaterialInstanceDynamic::Create(EmissiveBase, this) : nullptr;
 	if (HoverMID)
 	{
 		HoverGlow->SetMaterial(0, HoverMID);
+	}
+	if (HandleMID && HandleHotMID)
+	{
+		HandleMID->SetVectorParameterValue(MuseumAssets::Params::Color, HandleColor);
+		HandleMID->SetScalarParameterValue(MuseumAssets::Params::Intensity, 1.6f);
+		HandleHotMID->SetVectorParameterValue(MuseumAssets::Params::Color, FMath::Lerp(HandleColor, FLinearColor::White, 0.5f));
+		HandleHotMID->SetScalarParameterValue(MuseumAssets::Params::Intensity, 3.f);
 	}
 
 	if (MetalMID)
@@ -368,6 +477,7 @@ void AAlienChamber::ApplyMaterials()
 	}
 	ActiveLightColor = GetDesiredLightColor();
 	ApplyLightColor();
+	UpdateHandleVisuals();
 }
 
 FLinearColor AAlienChamber::GetDesiredLightColor() const
@@ -466,6 +576,10 @@ AAlienCharacter* AAlienChamber::SpawnAlien(UAlienDataAsset* Data)
 	Alien->InitializeAlien(Data, this);
 	Occupant = Alien;
 	OccupantData = Data;
+
+	// A big alien in a small case: grow the case so it fits (the clamp in SetInnerSize does that).
+	SetInnerSize(GetInnerSize());
+
 	ActiveLightColor = GetDesiredLightColor();
 	ApplyLightColor();
 	RefreshInfoText();
@@ -501,10 +615,10 @@ bool AAlienChamber::IsInsideMovementBounds(const FVector& WorldLocation, float M
 {
 	const float Scale = GetChamberScale();
 	const FVector Local = GetActorTransform().InverseTransformPosition(WorldLocation);
-	const float MaxR = GetMovementRadiusLocal() - Margin / Scale;
+	const FVector2f Move = GetMoveHalfLocal() - FVector2f(Margin / Scale);
 	const bool bInsideFlat = Shape == EChamberShape::Square
-		? FMath::Max(FMath::Abs(Local.X), FMath::Abs(Local.Y)) <= MaxR
-		: Local.Size2D() <= MaxR;
+		? FMath::Abs(Local.X) <= Move.X && FMath::Abs(Local.Y) <= Move.Y
+		: Local.Size2D() <= Move.X;
 	return bInsideFlat
 		&& Local.Z >= BaseHeight - 20.f
 		&& Local.Z <= BaseHeight + GlassHeight + 10.f;
@@ -514,17 +628,18 @@ FVector AAlienChamber::ClampToMovementBounds(const FVector& WorldLocation, float
 {
 	const float Scale = GetChamberScale();
 	const FTransform& T = GetActorTransform();
-	FVector Local = T.InverseTransformPosition(WorldLocation);
-	const float MaxR = FMath::Max(0.f, GetMovementRadiusLocal() - Margin / Scale);
-	FVector2D Flat(Local.X, Local.Y);
+	const FVector Local = T.InverseTransformPosition(WorldLocation);
+	const FVector2f Full = GetMoveHalfLocal();
+	const FVector2f Move(FMath::Max(0.f, Full.X - Margin / Scale), FMath::Max(0.f, Full.Y - Margin / Scale));
+	FVector2f Flat(static_cast<float>(Local.X), static_cast<float>(Local.Y));
 	if (Shape == EChamberShape::Square)
 	{
-		Flat.X = FMath::Clamp(Flat.X, -MaxR, MaxR);
-		Flat.Y = FMath::Clamp(Flat.Y, -MaxR, MaxR);
+		Flat.X = FMath::Clamp(Flat.X, -Move.X, Move.X);
+		Flat.Y = FMath::Clamp(Flat.Y, -Move.Y, Move.Y);
 	}
-	else if (Flat.Size() > MaxR)
+	else if (Flat.Size() > Move.X)
 	{
-		Flat = Flat.GetSafeNormal() * MaxR;
+		Flat = Flat.GetSafeNormal() * Move.X;
 	}
 	return T.TransformPosition(FVector(Flat.X, Flat.Y, BaseHeight + 1.f));
 }
@@ -542,7 +657,9 @@ bool AAlienChamber::FindRandomWanderPoint(const AAlienCharacter* Alien, FRandomS
 	const float CapsuleR = Capsule->GetScaledCapsuleRadius();
 	const float CapsuleHH = Capsule->GetScaledCapsuleHalfHeight();
 	// Walkable half-size in chamber space (keeps the whole body away from the glass).
-	const float MaxLocal = FMath::Max(0.f, GetMovementRadiusLocal() - (CapsuleR + 1.f * Scale) / Scale);
+	const float Keep = (CapsuleR + 1.f * Scale) / Scale;
+	const FVector2f Move = GetMoveHalfLocal();
+	const FVector2f Range(FMath::Max(0.f, Move.X - Keep), FMath::Max(0.f, Move.Y - Keep));
 	const FVector Start = Alien->GetActorLocation();
 	const FTransform& T = GetActorTransform();
 
@@ -553,16 +670,16 @@ bool AAlienChamber::FindRandomWanderPoint(const AAlienCharacter* Alien, FRandomS
 
 	for (int32 Attempt = 0; Attempt < 10; ++Attempt)
 	{
-		FVector2D Local;
+		FVector2f Local;
 		if (Shape == EChamberShape::Square)
 		{
-			Local = FVector2D(Rng.FRandRange(-MaxLocal, MaxLocal), Rng.FRandRange(-MaxLocal, MaxLocal));
+			Local = FVector2f(Rng.FRandRange(-Range.X, Range.X), Rng.FRandRange(-Range.Y, Range.Y));
 		}
 		else
 		{
 			const float Angle = Rng.FRandRange(0.f, 2.f * PI);
-			const float Distance = MaxLocal * FMath::Sqrt(Rng.FRand());
-			Local = FVector2D(FMath::Cos(Angle) * Distance, FMath::Sin(Angle) * Distance);
+			const float Distance = Range.X * FMath::Sqrt(Rng.FRand());
+			Local = FVector2f(FMath::Cos(Angle) * Distance, FMath::Sin(Angle) * Distance);
 		}
 		FVector Candidate = T.TransformPosition(FVector(Local.X, Local.Y, BaseHeight));
 		Candidate.Z = Start.Z;
@@ -592,19 +709,238 @@ float AAlienChamber::GetFloorZ() const
 	return GetActorTransform().TransformPosition(FVector(0.f, 0.f, BaseHeight)).Z;
 }
 
-float AAlienChamber::GetOuterRadius() const
+// ---------------------------------------------------------------------------------------------
+// Size
+// ---------------------------------------------------------------------------------------------
+
+void AAlienChamber::SetInnerSize(const FVector& NewSize)
 {
-	return Shape == EChamberShape::Square ? GetHalfWidth() * UE_SQRT_2 : GetHalfWidth();
+	auto Fit = [this](EChamberResizeAxis Axis, float Value)
+	{
+		return FMath::Clamp(Value, FMath::Max(SizeRange.X, GetMinSizeAlong(Axis)), FMath::Max(SizeRange.X, SizeRange.Y));
+	};
+	Depth = Fit(EChamberResizeAxis::Depth, NewSize.X);
+	Width = Fit(EChamberResizeAxis::Width, NewSize.Y);
+	GlassHeight = Fit(EChamberResizeAxis::Height, NewSize.Z);
+	BuildLayout();
 }
 
-float AAlienChamber::GetHalfWidth() const
+FVector AAlienChamber::GetOuterSize() const
 {
-	return (Radius + FrameInset) * GetChamberScale();
+	const FVector2f Half = GetInnerHalfLocal();
+	return FVector(2.f * (Half.X + FrameInset), 2.f * (Half.Y + FrameInset), BaseHeight + GlassHeight + 6.f) * GetChamberScale();
+}
+
+FVector2D AAlienChamber::GetFootprintHalfSize() const
+{
+	return FVector2D((GetInnerHalfLocal() + FVector2f(FrameInset)) * GetChamberScale());
+}
+
+float AAlienChamber::GetOuterRadius() const
+{
+	const FVector2D Half = GetFootprintHalfSize();
+	return static_cast<float>(Shape == EChamberShape::Round ? Half.X : Half.Size());
 }
 
 float AAlienChamber::GetTotalHeight() const
 {
 	return (BaseHeight + GlassHeight + 6.f) * GetChamberScale();
+}
+
+float AAlienChamber::GetSizeAlong(EChamberResizeAxis Axis) const
+{
+	switch (Axis)
+	{
+	case EChamberResizeAxis::Width: return Width;
+	case EChamberResizeAxis::Depth: return Depth;
+	case EChamberResizeAxis::Height: return GlassHeight;
+	default: return 0.f;
+	}
+}
+
+float AAlienChamber::GetMinSizeAlong(EChamberResizeAxis Axis) const
+{
+	if (!Occupant)
+	{
+		return 0.f;
+	}
+	// The alien is scaled together with the chamber, so its unscaled capsule is in chamber space.
+	const UCapsuleComponent* Capsule = Occupant->GetCapsuleComponent();
+	return Axis == EChamberResizeAxis::Height
+		? 2.f * Capsule->GetUnscaledCapsuleHalfHeight() + 8.f
+		: 2.f * (Capsule->GetUnscaledCapsuleRadius() + MoveInset) + 6.f;
+}
+
+void AAlienChamber::SetSizeAlong(EChamberResizeAxis Axis, float NewSize)
+{
+	FVector Size = GetInnerSize();
+	switch (Axis)
+	{
+	case EChamberResizeAxis::Width: Size.Y = NewSize; break;
+	case EChamberResizeAxis::Depth: Size.X = NewSize; break;
+	case EChamberResizeAxis::Height: Size.Z = NewSize; break;
+	default: return;
+	}
+	SetInnerSize(Size);
+
+	// Walls moved in: keep the alien inside the glass.
+	if (Occupant && !Occupant->IsHeld())
+	{
+		const float Radius = Occupant->GetCapsuleComponent()->GetScaledCapsuleRadius();
+		const FVector Location = Occupant->GetActorLocation();
+		if (!IsInsideMovementBounds(Location, Radius))
+		{
+			FVector Target = ClampToMovementBounds(Location, Radius);
+			Target.Z = Location.Z;
+			Occupant->SetActorLocation(Target);
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------------------------
+// Resize handles
+// ---------------------------------------------------------------------------------------------
+
+const FChamberResizeHandle* AAlienChamber::FindHandle(const UPrimitiveComponent* Component) const
+{
+	if (!Component)
+	{
+		return nullptr;
+	}
+	return ResizeHandles.FindByPredicate([Component](const FChamberResizeHandle& Handle) { return Handle.Hit == Component; });
+}
+
+EChamberResizeAxis AAlienChamber::GetResizeAxis(const UPrimitiveComponent* Component) const
+{
+	const FChamberResizeHandle* Handle = FindHandle(Component);
+	return Handle ? Handle->Axis : EChamberResizeAxis::None;
+}
+
+UPrimitiveComponent* AAlienChamber::FindResizeHandleNear(const FVector& WorldPoint, float MaxDistance) const
+{
+	if (bGrabbed)
+	{
+		return nullptr;
+	}
+	UPrimitiveComponent* Best = nullptr;
+	float BestDistance = MaxDistance;
+	for (const FChamberResizeHandle& Handle : ResizeHandles)
+	{
+		if (Handle.Axis == EChamberResizeAxis::Depth && Shape == EChamberShape::Round)
+		{
+			continue;
+		}
+		const float Distance = FVector::Dist(Handle.Hit->GetComponentLocation(), WorldPoint);
+		if (Distance <= BestDistance)
+		{
+			Best = Handle.Hit;
+			BestDistance = Distance;
+		}
+	}
+	return Best;
+}
+
+FVector AAlienChamber::GetResizeDirection(const UPrimitiveComponent* Handle) const
+{
+	const FChamberResizeHandle* Found = FindHandle(Handle);
+	if (!Found)
+	{
+		return FVector::ZeroVector;
+	}
+	FVector Local = FVector::UpVector;
+	if (Found->Axis == EChamberResizeAxis::Width)
+	{
+		Local = FVector(0.f, Found->Side, 0.f);
+	}
+	else if (Found->Axis == EChamberResizeAxis::Depth)
+	{
+		Local = FVector(Found->Side, 0.f, 0.f);
+	}
+	return GetActorTransform().TransformVectorNoScale(Local).GetSafeNormal();
+}
+
+void AAlienChamber::BeginResize(const UPrimitiveComponent* Handle)
+{
+	const FChamberResizeHandle* Found = FindHandle(Handle);
+	if (!Found || bGrabbed || IsBeingResized())
+	{
+		return;
+	}
+	ResizeAxis = Found->Axis;
+	ResizeHandle = Handle;
+	ResizeStartSize = GetSizeAlong(ResizeAxis);
+	SizeLabel->SetVisibility(true);
+	RefreshSizeLabel();
+	UpdateHandleVisuals();
+}
+
+void AAlienChamber::UpdateResize(float DragDistance)
+{
+	if (!IsBeingResized())
+	{
+		return;
+	}
+	const float Local = DragDistance / GetChamberScale();
+	// Width and depth grow on both sides, so the handle stays under the hand; height grows upwards.
+	SetSizeAlong(ResizeAxis, ResizeStartSize + (ResizeAxis == EChamberResizeAxis::Height ? Local : 2.f * Local));
+	RefreshSizeLabel();
+}
+
+void AAlienChamber::EndResize()
+{
+	if (!IsBeingResized())
+	{
+		return;
+	}
+	const bool bChanged = FMath::Abs(GetSizeAlong(ResizeAxis) - ResizeStartSize) > 0.5f;
+	ResizeAxis = EChamberResizeAxis::None;
+	ResizeHandle = nullptr;
+	SizeLabel->SetVisibility(false);
+	UpdateHandleVisuals();
+	if (bChanged)
+	{
+		OnResized.Broadcast(this);
+	}
+}
+
+void AAlienChamber::UpdateHandleVisuals()
+{
+	const bool bResizing = IsBeingResized();
+	const bool bShow = bResizing || (HoverCount > 0 && !bGrabbed);
+	for (FChamberResizeHandle& Handle : ResizeHandles)
+	{
+		if (!Handle.Hit)
+		{
+			continue;
+		}
+		const bool bUsed = !(Handle.Axis == EChamberResizeAxis::Depth && Shape == EChamberShape::Round);
+		const bool bActive = bResizing && ResizeHandle.Get() == Handle.Hit;
+		const bool bVisible = bUsed && bShow && (!bResizing || bActive);
+		const bool bHot = bActive || (!bResizing && HotHandle.Get() == Handle.Hit);
+		Handle.Hit->SetCollisionEnabled(bVisible && !bResizing ? ECollisionEnabled::QueryOnly : ECollisionEnabled::NoCollision);
+		UMaterialInterface* Material = bHot ? HandleHotMID.Get() : HandleMID.Get();
+		for (UStaticMeshComponent* Part : { Handle.Knob.Get(), Handle.ArrowOut.Get(), Handle.ArrowIn.Get() })
+		{
+			Part->SetVisibility(bVisible);
+			if (Material)
+			{
+				Part->SetMaterial(0, Material);
+			}
+		}
+		Handle.Knob->SetRelativeScale3D(FVector(bHot ? 0.06f : 0.045f));
+	}
+}
+
+void AAlienChamber::RefreshSizeLabel()
+{
+	const TCHAR* Name = ResizeAxis == EChamberResizeAxis::Width ? TEXT("WIDTH")
+		: ResizeAxis == EChamberResizeAxis::Depth ? TEXT("DEPTH")
+		: TEXT("HEIGHT");
+	// Real-world centimetres (the uniform exhibit scale included).
+	const float Scale = GetChamberScale();
+	SizeLabel->SetText(FText::FromString(FString::Printf(TEXT("%s %.0f cm\n%.0f x %.0f x %.0f cm"),
+		Name, GetSizeAlong(ResizeAxis) * Scale, Width * Scale,
+		(Shape == EChamberShape::Round ? Width : Depth) * Scale, GlassHeight * Scale)));
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -626,17 +962,17 @@ float AAlienChamber::DistanceToChamber(const FVector& WorldPoint) const
 	const float Scale = GetChamberScale();
 	const FVector Local = GetActorTransform().InverseTransformPosition(WorldPoint);
 	const float TopZ = BaseHeight + GlassHeight + 6.f;
-	const float Half = Radius + FrameInset;
+	const FVector2f Half = GetInnerHalfLocal() + FVector2f(FrameInset);
 	float Radial;
 	if (Shape == EChamberShape::Square)
 	{
-		const float DX = FMath::Max(0.f, FMath::Abs(static_cast<float>(Local.X)) - Half);
-		const float DY = FMath::Max(0.f, FMath::Abs(static_cast<float>(Local.Y)) - Half);
+		const float DX = FMath::Max(0.f, FMath::Abs(static_cast<float>(Local.X)) - Half.X);
+		const float DY = FMath::Max(0.f, FMath::Abs(static_cast<float>(Local.Y)) - Half.Y);
 		Radial = FMath::Sqrt(DX * DX + DY * DY);
 	}
 	else
 	{
-		Radial = FMath::Max(0.f, static_cast<float>(Local.Size2D()) - Half);
+		Radial = FMath::Max(0.f, static_cast<float>(Local.Size2D()) - Half.X);
 	}
 	const float Vertical = Local.Z < 0.f ? -Local.Z : FMath::Max(0.f, Local.Z - TopZ);
 	return FMath::Sqrt(Radial * Radial + Vertical * Vertical) * Scale;
@@ -648,6 +984,7 @@ void AAlienChamber::BeginGrab()
 	{
 		return;
 	}
+	EndResize();
 	bGrabbed = true;
 	bMovedSinceGrab = false;
 	GrabStartLocation = GrabTargetLocation = GetActorLocation();
@@ -658,6 +995,7 @@ void AAlienChamber::BeginGrab()
 		Occupant->SetHeld(true);
 	}
 	UpdateVisualState();
+	UpdateHandleVisuals();
 	// OnGrabbed fires from UpdateGrab once the chamber really moves, so a simple click keeps
 	// the chamber's spatial anchor.
 }
@@ -704,6 +1042,7 @@ void AAlienChamber::EndGrab()
 	// The occupant stays attached until NotifyPlaced(), so it rides along if the director
 	// still has to adjust the chamber's position.
 	UpdateVisualState();
+	UpdateHandleVisuals();
 }
 
 void AAlienChamber::SetFloating(bool bInFloating)
@@ -777,6 +1116,10 @@ void AAlienChamber::RefreshInfoText()
 			*OccupantData->Species.ToString(),
 			*OccupantData->HomePlanet.ToString(),
 			*WrapText(OccupantData->Description.ToString(), 44, 3));
+		if (!OccupantData->ModelCredit.IsEmpty())
+		{
+			Body += TEXT("\n") + WrapText(OccupantData->ModelCredit.ToString(), 52, 1);
+		}
 	}
 	else
 	{
@@ -787,20 +1130,20 @@ void AAlienChamber::RefreshInfoText()
 	InfoBody->SetText(FText::FromString(Body));
 }
 
-void AAlienChamber::FaceInfoPanelToViewer(float DeltaSeconds)
+void AAlienChamber::FaceViewer(USceneComponent* Component, float DeltaSeconds, bool bInstant) const
 {
 	APlayerCameraManager* Camera = UGameplayStatics::GetPlayerCameraManager(this, 0);
-	if (!Camera)
+	if (!Camera || !Component)
 	{
 		return;
 	}
-	const FVector ToViewer = Camera->GetCameraLocation() - InfoRoot->GetComponentLocation();
+	const FVector ToViewer = Camera->GetCameraLocation() - Component->GetComponentLocation();
 	if (ToViewer.SizeSquared2D() < 1.f)
 	{
 		return;
 	}
 	const FRotator Target(0.f, ToViewer.Rotation().Yaw, 0.f);
-	InfoRoot->SetWorldRotation(FMath::RInterpTo(InfoRoot->GetComponentRotation(), Target, DeltaSeconds, 6.f));
+	Component->SetWorldRotation(bInstant ? Target : FMath::RInterpTo(Component->GetComponentRotation(), Target, DeltaSeconds, 6.f));
 }
 
 void AAlienChamber::Tick(float DeltaSeconds)
@@ -818,7 +1161,17 @@ void AAlienChamber::Tick(float DeltaSeconds)
 
 	if (bInfoVisible)
 	{
-		FaceInfoPanelToViewer(DeltaSeconds);
+		FaceViewer(InfoRoot, DeltaSeconds);
+	}
+
+	// Size read-out follows the handle being dragged.
+	if (IsBeingResized())
+	{
+		if (const UPrimitiveComponent* Handle = ResizeHandle.Get())
+		{
+			SizeLabel->SetWorldLocation(Handle->GetComponentLocation() + FVector(0.f, 0.f, 9.f * GetChamberScale()));
+			FaceViewer(SizeLabel, DeltaSeconds, true);
+		}
 	}
 
 	// Slow "anti-gravity" breathing under a floating chamber.
@@ -850,7 +1203,21 @@ void AAlienChamber::Tick(float DeltaSeconds)
 
 void AAlienChamber::OnPointerHover(UPrimitiveComponent* HitComponent, bool bHovered)
 {
-	SetHighlighted(bHovered, true);
+	// Both hands may point at the chamber; the handles stay while at least one does.
+	HoverCount = FMath::Max(0, HoverCount + (bHovered ? 1 : -1));
+	if (GetResizeAxis(HitComponent) != EChamberResizeAxis::None)
+	{
+		if (bHovered)
+		{
+			HotHandle = HitComponent;
+		}
+		else if (HotHandle.Get() == HitComponent)
+		{
+			HotHandle = nullptr;
+		}
+	}
+	SetHighlighted(HoverCount > 0, true);
+	UpdateHandleVisuals();
 }
 
 bool AAlienChamber::OnPointerSelect(UPrimitiveComponent* HitComponent, AMuseumPawn* Pawn)

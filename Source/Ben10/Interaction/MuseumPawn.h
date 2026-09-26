@@ -206,6 +206,18 @@ private:
 		bool bFromSelect = false;
 	};
 
+	/** A hand dragging one of a chamber's resize handles. */
+	struct FHandResize
+	{
+		TWeakObjectPtr<AAlienChamber> Chamber;
+		TWeakObjectPtr<UPrimitiveComponent> Handle;
+		FVector Direction = FVector::ZeroVector;  // world direction that makes the chamber bigger
+		FVector StartPoint = FVector::ZeroVector;
+		float RayDistance = 0.f;                  // ray drags: the point stays this far along the ray
+		bool bNear = false;                       // hand-tracking pinch right at the handle
+		bool bFromSelect = false;
+	};
+
 	void CreateDefaultInput();
 	void ApplyInputMapping();
 	void ConfigureForDisplayMode();
@@ -231,6 +243,11 @@ private:
 
 	bool TryBeginGrab(UMuseumHandInteractor* Hand, bool bFromSelect);
 	void EndGrab(UMuseumHandInteractor* Hand);
+	bool TryBeginResize(UMuseumHandInteractor* Hand, bool bFromSelect);
+	void EndResize(UMuseumHandInteractor* Hand);
+	void UpdateResizes();
+	FVector GetResizePoint(const UMuseumHandInteractor* Hand, const FHandResize& Resize) const;
+	FHandResize& GetResize(const UMuseumHandInteractor* Hand);
 	void BeginTwoHandGrab(AAlienChamber* Chamber);
 	void ResetOneHandGrab(UMuseumHandInteractor* Hand, AAlienChamber* Chamber);
 	void UpdateGrabs(float DeltaSeconds);
@@ -263,6 +280,8 @@ private:
 	EMuseumPawnMode Mode = EMuseumPawnMode::Default;
 	FHandGrab LeftGrab;
 	FHandGrab RightGrab;
+	FHandResize LeftResize;
+	FHandResize RightResize;
 
 	bool bTwoHand = false;
 	float TwoHandStartDistance = 1.f;

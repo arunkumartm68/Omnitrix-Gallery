@@ -88,6 +88,7 @@ void UMuseumPersistenceComponent::CommitChamber(AAlienChamber* Chamber)
 	const UAlienDataAsset* Data = Chamber->GetOccupantData();
 	Record.AlienId = Data ? Data->AlienId : NAME_None;
 	Record.Scale = Chamber->GetChamberScale();
+	Record.InnerSize = Chamber->GetInnerSize();
 	Record.LastTransform = Chamber->GetActorTransform();
 	WriteSave();
 
@@ -278,6 +279,10 @@ void UMuseumPersistenceComponent::RestoreMuseum(TSubclassOf<AAlienChamber> Chamb
 			{
 				Chamber->SetChamberId(Record.ChamberId);
 				Chamber->SetChamberScale(Record.Scale);
+				if (!Record.InnerSize.IsNearlyZero())
+				{
+					Chamber->SetInnerSize(Record.InnerSize);
+				}
 				++NumRestored;
 				if (RestoredCallback)
 				{
@@ -367,6 +372,10 @@ void UMuseumPersistenceComponent::HandleDiscoverResults(const TArray<FOculusXRAn
 		}
 		Chamber->SetChamberId(Record.ChamberId);
 		Chamber->SetChamberScale(Record.Scale);
+		if (!Record.InnerSize.IsNearlyZero())
+		{
+			Chamber->SetInnerSize(Record.InnerSize);
+		}
 		Chamber->SetActorHiddenInGame(true); // shown once the anchor reports a valid pose
 
 		FPendingLocalization Pending;

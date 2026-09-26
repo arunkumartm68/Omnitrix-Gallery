@@ -25,6 +25,10 @@ struct BEN10_API FMuseumChamberRecord
 	UPROPERTY(SaveGame, BlueprintReadOnly, Category = "Museum")
 	float Scale = 1.f;
 
+	/** Inside size of the glass (depth, width, height in cm at scale 1). Zero = the chamber's default. */
+	UPROPERTY(SaveGame, BlueprintReadOnly, Category = "Museum")
+	FVector InnerSize = FVector::ZeroVector;
+
 	/** Last known world transform. Only trusted without a headset (editor testing). */
 	UPROPERTY(SaveGame, BlueprintReadOnly, Category = "Museum")
 	FTransform LastTransform;

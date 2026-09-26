@@ -2,6 +2,7 @@
 
 #include "Aliens/AlienAppearanceComponent.h"
 #include "Core/MuseumAssets.h"
+#include "Ben10.h"
 #include "Components/StaticMeshComponent.h"
 #include "Engine/StaticMesh.h"
 #include "Materials/MaterialInstanceDynamic.h"
@@ -90,6 +91,7 @@ void UAlienAppearanceComponent::ClearAppearance()
 	HeadPivot = nullptr;
 	FootL = nullptr;
 	FootR = nullptr;
+	bIsModel = false;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -206,10 +208,29 @@ void UAlienAppearanceComponent::BuildAppearance(const UAlienDataAsset* Data)
 	bHovers = Data->bHovers;
 	HoverHeight = bHovers ? H * 0.10f : 0.f;
 
-	CreateMaterials(Data);
+	// An imported model replaces the shape-built body.
+	UStaticMesh* Model = Data->HasModel() ? Data->ModelMesh.LoadSynchronous() : nullptr;
+	if (Data->HasModel() && !Model)
+	{
+		UE_LOG(LogAlienMuseum, Warning, TEXT("%s: model %s could not be loaded, using the shape body"),
+			*Data->GetName(), *Data->ModelMesh.ToString());
+	}
+	bIsModel = Model != nullptr;
+	if (!bIsModel)
+	{
+		CreateMaterials(Data);
+	}
 
 	// Everything that bobs / squashes / hovers hangs off the body pivot (origin = feet).
 	BodyPivot = AddPivot(TEXT("AlienBodyPivot"), this, FTransform(FVector(0.f, 0.f, HoverHeight)));
+
+	if (bIsModel)
+	{
+		BuildModelBody(Data, Model);
+		AnimTime = FMath::FRand() * 10.f;
+		HeadRotation = FRotator::ZeroRotator;
+		return;
+	}
 
 	if (Data->BodyShape == EAlienBodyShape::Custom)
 	{
@@ -236,9 +257,35 @@ void UAlienAppearanceComponent::BuildAppearance(const UAlienDataAsset* Data)
 		}
 	}
 
+	ShadowRadius = ModelRadius;
 	AnimTime = FMath::FRand() * 10.f;
 	BlinkTimer = FMath::FRandRange(1.f, 4.f);
 	HeadRotation = FRotator::ZeroRotator;
+}
+
+void UAlienAppearanceComponent::BuildModelBody(const UAlienDataAsset* Data, UStaticMesh* Mesh)
+{
+	const float H = Data->Height;
+	const FQuat Fix = Data->ModelRotation.Quaternion();
+
+	// The bounds after the fix-up rotation decide scale and placement: Height tall, lowest point on
+	// the ground, centred on the capsule. So any download works, whatever its units and pivot.
+	const FBox ModelBounds = Mesh->GetBoundingBox().TransformBy(FTransform(Fix));
+	const float MeshHeight = FMath::Max(static_cast<float>(ModelBounds.Max.Z - ModelBounds.Min.Z), 0.01f);
+	const float Scale = H / MeshHeight;
+	const FVector Center = ModelBounds.GetCenter();
+	const FVector Offset(-Center.X * Scale, -Center.Y * Scale, -ModelBounds.Min.Z * Scale);
+	AddPart(TEXT("AlienModel"), Mesh, BodyPivot, FTransform(Fix, Offset, FVector(Scale)), nullptr);
+
+	const FVector Half = ModelBounds.GetExtent() * Scale;
+	ModelRadius = FMath::Max(Half.X, Half.Y);
+	CollisionRadius = ModelRadius * 0.9f;       // keeps outstretched limbs inside the glass
+	ShadowRadius = FMath::Min(ModelRadius, 0.3f * H);
+
+	// A model has no separate head; the pivot only keeps the animation code uniform.
+	HeadBaseXY = FVector2D::ZeroVector;
+	HeadBaseZ = 0.85f * H;
+	HeadPivot = AddPivot(TEXT("AlienHeadPivot"), this, FTransform(FVector(0.f, 0.f, HeadBaseZ + HoverHeight)));
 }
 
 void UAlienAppearanceComponent::BuildBuiltInBody(const UAlienDataAsset* Data)
@@ -514,8 +561,14 @@ void UAlienAppearanceComponent::UpdateAnimation(float DeltaSeconds, float SpeedA
 	}
 	else
 	{
-		Squash = Wave * (0.025f + 0.04f * SpeedAlpha + 0.03f * Excite);
+		// Models are rigid figures: half the squash, and a waddle instead of swinging legs.
+		Squash = Wave * (0.025f + 0.04f * SpeedAlpha + 0.03f * Excite) * (bIsModel ? 0.5f : 1.f);
 		BodyPivot->SetRelativeScale3D(FVector(1.f - Squash * 0.5f, 1.f - Squash * 0.5f, 1.f + Squash));
+		if (bIsModel)
+		{
+			const float Step = AnimTime * 6.f;
+			BodyPivot->SetRelativeRotation(FRotator(-3.f * SpeedAlpha, 0.f, FMath::Sin(Step) * 4.f * SpeedAlpha));
+		}
 
 		if (FootL && FootR)
 		{

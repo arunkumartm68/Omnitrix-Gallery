@@ -86,27 +86,28 @@ void AAlienCharacter::InitializeAlien(UAlienDataAsset* InData, AAlienChamber* In
 
 	// Build the placeholder only when no real skeletal mesh was assigned in a Blueprint subclass.
 	float ModelHeight = AlienData->Height;
-	float ModelRadius = AlienData->Height * 0.3f;
-	float CollisionRadius = ModelRadius * 0.8f;
+	float CollisionRadius = AlienData->Height * 0.24f;
+	float ShadowRadius = AlienData->Height * 0.3f;
 	if (!GetMesh()->GetSkeletalMeshAsset())
 	{
 		Appearance->BuildAppearance(AlienData);
 		Appearance->PlayMaterialize(0.6f);
 		ModelHeight = Appearance->GetModelHeight();
-		ModelRadius = Appearance->GetModelRadius();
 		CollisionRadius = Appearance->GetCollisionRadius();
+		ShadowRadius = Appearance->GetShadowRadius();
 	}
 	bAppearanceBuilt = true;
 
-	const float Radius = FMath::Clamp(CollisionRadius, 6.f, 20.f);
+	// Imported models can be wide (tails, spread arms): allow a bigger capsule so they stay inside the glass.
+	const float Radius = FMath::Clamp(CollisionRadius, 6.f, Appearance->IsModel() ? 30.f : 20.f);
 	const float HalfHeight = FMath::Max(Radius, ModelHeight * 0.5f);
 	GetCapsuleComponent()->SetCapsuleSize(Radius, HalfHeight);
 	Appearance->SetRelativeLocation(FVector(0.f, 0.f, -HalfHeight));
 	GetMesh()->SetRelativeLocation(FVector(0.f, 0.f, -HalfHeight));
 
-	// Contact shadow: a soft disc just above the floor, a bit wider than the body.
+	// Contact shadow: a soft disc just above the floor, a bit wider than the feet area.
 	ContactShadow->SetRelativeLocation(FVector(0.f, 0.f, -HalfHeight + 0.3f));
-	ContactShadow->SetRelativeScale3D(FVector(ModelRadius * 2.6f / 100.f, ModelRadius * 2.6f / 100.f, 1.f));
+	ContactShadow->SetRelativeScale3D(FVector(ShadowRadius * 2.6f / 100.f, ShadowRadius * 2.6f / 100.f, 1.f));
 	if (UMaterialInterface* ShadowMaterial = MuseumAssets::BlobShadowMaterial())
 	{
 		ContactShadow->SetMaterial(0, ShadowMaterial);

@@ -2,8 +2,9 @@
 //
 // Create one per alien: Content Browser > Add > Miscellaneous > Data Asset > AlienDataAsset.
 //
-// The look is built from engine basic shapes: either one of the built-in body shapes (plus optional
-// extra Parts), or BodyShape = Custom where the whole creature is described by the Parts list.
+// The look is either an imported 3D model (ModelMesh), or built from engine basic shapes: one of the
+// built-in body shapes (plus optional extra Parts), or BodyShape = Custom where the whole creature is
+// described by the Parts list.
 // Part positions and sizes are in "height units": 1.0 = the alien's full Height, so the same
 // part list works at any size. Axes: X = forward (the way the alien faces), Y = right, Z = up.
 
@@ -14,6 +15,7 @@
 #include "AlienDataAsset.generated.h"
 
 class AAlienCharacter;
+class UStaticMesh;
 
 /** Silhouette of the built-in placeholder alien. */
 UENUM(BlueprintType)
@@ -163,6 +165,25 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Spawning")
 	TSoftClassPtr<AAlienCharacter> CharacterClass;
 
+	// ---------- Imported model ----------
+
+	/**
+	 * Imported 3D model. When set it is shown instead of the shape-built body: it is scaled to Height,
+	 * stood on its lowest point and centred, so models of any size and pivot work. It should face +X.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Model")
+	TSoftObjectPtr<UStaticMesh> ModelMesh;
+
+	/** Extra rotation for a model that does not face forward (+X) or stand upright. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Model")
+	FRotator ModelRotation = FRotator::ZeroRotator;
+
+	/** Where the model came from (download / author), shown on the chamber's info panel. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Model")
+	FText ModelCredit;
+
+	bool HasModel() const { return !ModelMesh.IsNull(); }
+
 	// ---------- Placeholder appearance ----------
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Appearance")
@@ -203,8 +224,8 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Appearance")
 	bool bHovers = false;
 
-	/** Standing height at chamber scale 1. The default chamber fits aliens up to ~45 cm. */
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Appearance", meta = (ClampMin = 15, ClampMax = 45, Units = "cm"))
+	/** Standing height at chamber scale 1. The default chamber (105 cm glass) fits aliens up to ~90 cm. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Appearance", meta = (ClampMin = 10, ClampMax = 150, Units = "cm"))
 	float Height = 32.f;
 
 	/** Custom bodies: the neck / head joint in height units (the head turns around it). */

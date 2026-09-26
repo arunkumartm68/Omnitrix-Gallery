@@ -13,6 +13,7 @@
 
 class AAlienChamber;
 class AAlienCollectionPanel;
+class ADirectionalLight;
 class UAlienCollectionAsset;
 class UAlienDataAsset;
 class UMuseumSceneComponent;
@@ -69,6 +70,10 @@ public:
 	/** True if a new chamber of this radius with its bottom at FloorLocation would not overlap another chamber. */
 	UFUNCTION(BlueprintPure, Category = "Museum")
 	bool IsPlacementFree(const FVector& FloorLocation, float Radius, const AAlienChamber* Ignore) const;
+
+	/** True if a case of OuterSize (depth, width, height; world cm) at FloorLocation turned by Yaw would not overlap another chamber. */
+	UFUNCTION(BlueprintPure, Category = "Museum")
+	bool IsFootprintFree(const FVector& FloorLocation, float Yaw, const FVector& OuterSize, const AAlienChamber* Ignore) const;
 
 	/** Default object of ChamberClass: size and shape of the chambers that will be spawned. */
 	const AAlienChamber* GetChamberTemplate() const;
@@ -130,6 +135,24 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Museum", meta = (Units = "s", ClampMin = 0))
 	float RestoredAlienDelay = 1.f;
 
+	/**
+	 * Turns the level's (movable) directional light so it shines from over the viewer's shoulder.
+	 * Whatever the player looks at is then lit from the front - imported models have no glow of
+	 * their own, and aliens turn to face the player.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Museum|Lighting")
+	bool bKeyLightFollowsViewer = true;
+
+	/** How steeply the key light shines down (degrees). */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Museum|Lighting", meta = (ClampMin = 5, ClampMax = 89))
+	float KeyLightElevation = 45.f;
+
+	/** Sideways offset from the view direction (degrees), so faces get some shape. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Museum|Lighting", meta = (ClampMin = -90, ClampMax = 90))
+	float KeyLightSideAngle = 25.f;
+
+	virtual void Tick(float DeltaSeconds) override;
+
 protected:
 	virtual void BeginPlay() override;
 
@@ -147,6 +170,9 @@ private:
 	void HandleChamberGrabbed(AAlienChamber* Chamber);
 
 	UFUNCTION()
+	void HandleChamberResized(AAlienChamber* Chamber);
+
+	UFUNCTION()
 	void HandleOccupantChanged(AAlienChamber* Chamber);
 
 	void RestoreMuseum();
@@ -160,6 +186,10 @@ private:
 
 	/** Shows the anti-gravity glow when nothing real is directly under the chamber. */
 	void UpdateFloatingState(AAlienChamber* Chamber) const;
+
+	void UpdateKeyLight(float DeltaSeconds);
+
+	TWeakObjectPtr<ADirectionalLight> KeyLight;
 
 	UPROPERTY(Transient)
 	TArray<TObjectPtr<AAlienChamber>> Chambers;

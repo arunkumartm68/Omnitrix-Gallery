@@ -2,7 +2,8 @@
 //
 // Built from 3D components (planes, text, box hit volumes) instead of UMG so it can be pointed at
 // and pinched with the same ray as everything else, without a widget-interaction setup.
-// Each card shows a spinning mini version of the alien.
+// Each card shows a spinning mini version of the alien (its imported model when it has one);
+// Prev / Next page through collections larger than one page.
 
 #pragma once
 
@@ -106,6 +107,10 @@ public:
 	/** Height of the mini aliens on the cards (cm). */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Museum|Collection")
 	float PreviewHeight = 11.f;
+
+	/** Widest a mini alien may be on its card (cm); wide models are shrunk to fit. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Museum|Collection")
+	float PreviewWidth = 20.f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Museum|Collection")
 	FLinearColor AccentColor = FLinearColor(0.15f, 0.7f, 1.0f);

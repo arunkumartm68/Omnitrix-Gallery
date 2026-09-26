@@ -1,4 +1,4 @@
-// Alien Museum - a glass museum case that holds one alien (square display case or round pod).
+// Alien Museum - a glass museum case that holds one alien (tall rectangular display case or round pod).
 //
 //  AAlienChamber
 //   ├── Base (metal, the alien walks on it)
@@ -6,16 +6,22 @@
 //   ├── Glass (translucent, no collision)
 //   ├── Frame posts (one instanced mesh = one draw call) + TopCap
 //   ├── ContainmentWalls (4 or 8 invisible boxes + ceiling, block only pawns)
-//   ├── Obstacles (rock + crystal the alien walks around)
+//   ├── Obstacles (optional rock + crystal the alien walks around)
 //   ├── MovementBounds (where the alien may walk)
 //   ├── SpawnPoint
 //   ├── SelectBox (what the pointer ray hits)
+//   ├── Resize handles (top = height, sides = width, base front = depth; shown while pointed at)
 //   ├── HoverGlow (anti-gravity glow under the base while floating in the air)
-//   ├── InfoRoot (holographic info panel)
+//   ├── InfoRoot (holographic info panel) + SizeLabel (shown while resizing)
 //   └── InteriorLight (optional real point light, off by default for Quest performance)
+//
+// Width, depth and glass height are independent and can change at runtime (resize handles), so
+// every part is laid out from them in BuildLayout(). The actor scale stays uniform: it scales the
+// whole exhibit, alien included, while the size only gives the alien more or less room.
 //
 // The actor origin is the centre of the underside of the base, so placing it on a surface only
 // needs the hit location. Chambers have no gravity: they can also float in mid-air.
+// Local axes: +X = front (faces the viewer when placed), Y = width, Z = up.
 // Spatial anchors are added by UMuseumPersistenceComponent.
 
 #pragma once
@@ -29,6 +35,7 @@ class UStaticMeshComponent;
 class UInstancedStaticMeshComponent;
 class UBoxComponent;
 class UCapsuleComponent;
+class USphereComponent;
 class UPointLightComponent;
 class UTextRenderComponent;
 class UMaterialInterface;
@@ -42,8 +49,43 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnAlienChamberEvent, AAlienChamber*
 UENUM(BlueprintType)
 enum class EChamberShape : uint8
 {
-	Square UMETA(ToolTip = "Box-shaped glass display case"),
-	Round UMETA(ToolTip = "Cylindrical glass pod")
+	Square UMETA(DisplayName = "Box", ToolTip = "Rectangular glass display case"),
+	Round UMETA(ToolTip = "Cylindrical glass pod (Width is its diameter)")
+};
+
+/** Which size a resize handle changes. */
+UENUM(BlueprintType)
+enum class EChamberResizeAxis : uint8
+{
+	None,
+	Width UMETA(ToolTip = "Left-right; both sides move"),
+	Depth UMETA(ToolTip = "Front-back; both sides move"),
+	Height UMETA(ToolTip = "Glass height; the base stays put")
+};
+
+/** One grabbable resize knob with two arrows showing the drag direction. */
+USTRUCT()
+struct FChamberResizeHandle
+{
+	GENERATED_BODY()
+
+	/** Invisible sphere the pointer ray hits (only while the handles are shown). */
+	UPROPERTY()
+	TObjectPtr<USphereComponent> Hit;
+
+	UPROPERTY()
+	TObjectPtr<UStaticMeshComponent> Knob;
+
+	UPROPERTY()
+	TObjectPtr<UStaticMeshComponent> ArrowOut;
+
+	UPROPERTY()
+	TObjectPtr<UStaticMeshComponent> ArrowIn;
+
+	EChamberResizeAxis Axis = EChamberResizeAxis::None;
+
+	/** +1 / -1: which side of the case the handle sits on along its axis. */
+	float Side = 1.f;
 };
 
 UCLASS()
@@ -89,17 +131,57 @@ public:
 	/** World Z of the surface the alien walks on. */
 	float GetFloorZ() const;
 
-	/** World-space radius around the outer shell (half diagonal for square cases), used to keep chambers apart. */
-	UFUNCTION(BlueprintPure, Category = "Chamber")
+	// ---------- Size ----------
+
+	/** Inside size of the glass in cm at scale 1: X = depth, Y = width, Z = glass height. */
+	UFUNCTION(BlueprintPure, Category = "Chamber|Size")
+	FVector GetInnerSize() const { return FVector(Depth, Width, GlassHeight); }
+
+	/** Changes depth / width / glass height (clamped so the occupant still fits) and rebuilds the case. */
+	UFUNCTION(BlueprintCallable, Category = "Chamber|Size")
+	void SetInnerSize(const FVector& NewSize);
+
+	/** World-space size of the whole case (frame, base and cap included): X = depth, Y = width, Z = height. */
+	UFUNCTION(BlueprintPure, Category = "Chamber|Size")
+	FVector GetOuterSize() const;
+
+	/** World-space half size of the outer footprint (X = depth, Y = width), used to keep chambers apart. */
+	FVector2D GetFootprintHalfSize() const;
+
+	/** World-space radius around the outer footprint (half its diagonal). */
+	UFUNCTION(BlueprintPure, Category = "Chamber|Size")
 	float GetOuterRadius() const;
 
-	/** World-space half width of the outer shell (the radius for a round pod). */
-	UFUNCTION(BlueprintPure, Category = "Chamber")
-	float GetHalfWidth() const;
-
 	/** World-space height from the underside of the base to the top of the cap. */
-	UFUNCTION(BlueprintPure, Category = "Chamber")
+	UFUNCTION(BlueprintPure, Category = "Chamber|Size")
 	float GetTotalHeight() const;
+
+	// ---------- Resize handles (driven by AMuseumPawn) ----------
+
+	/** Which size a component changes when dragged (None if it is not a resize handle). */
+	UFUNCTION(BlueprintPure, Category = "Chamber|Size")
+	EChamberResizeAxis GetResizeAxis(const UPrimitiveComponent* Component) const;
+
+	/** The resize handle whose knob is within MaxDistance of WorldPoint (hand-tracking pinch), if any. */
+	UFUNCTION(BlueprintPure, Category = "Chamber|Size")
+	UPrimitiveComponent* FindResizeHandleNear(const FVector& WorldPoint, float MaxDistance) const;
+
+	/** World direction in which dragging this handle makes the chamber bigger. */
+	UFUNCTION(BlueprintPure, Category = "Chamber|Size")
+	FVector GetResizeDirection(const UPrimitiveComponent* Handle) const;
+
+	UFUNCTION(BlueprintCallable, Category = "Chamber|Size")
+	void BeginResize(const UPrimitiveComponent* Handle);
+
+	/** DragDistance: how far (world cm) the hand moved along GetResizeDirection since BeginResize. */
+	UFUNCTION(BlueprintCallable, Category = "Chamber|Size")
+	void UpdateResize(float DragDistance);
+
+	UFUNCTION(BlueprintCallable, Category = "Chamber|Size")
+	void EndResize();
+
+	UFUNCTION(BlueprintPure, Category = "Chamber|Size")
+	bool IsBeingResized() const { return ResizeAxis != EChamberResizeAxis::None; }
 
 	// ---------- Grabbing (driven by AMuseumPawn) ----------
 
@@ -165,6 +247,10 @@ public:
 	UPROPERTY(BlueprintAssignable, Category = "Chamber")
 	FOnAlienChamberEvent OnGrabbed;
 
+	/** A resize handle was let go after changing the size. */
+	UPROPERTY(BlueprintAssignable, Category = "Chamber")
+	FOnAlienChamberEvent OnResized;
+
 	UPROPERTY(BlueprintAssignable, Category = "Chamber")
 	FOnAlienChamberEvent OnOccupantChanged;
 
@@ -178,23 +264,32 @@ public:
 
 	// ---------- Designer settings ----------
 
-	/** Square display case or round pod. */
+	/** Rectangular display case or round pod. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Chamber|Size")
 	EChamberShape Shape = EChamberShape::Square;
 
-	/** Inner half-width of the glass for square cases, inner radius for round pods (cm, at scale 1). */
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Chamber|Size", meta = (ClampMin = 15, ClampMax = 80))
-	float Radius = 30.f;
+	/** Inside width of the glass, left to right as seen from the front (cm at scale 1). Round pods: the diameter. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Chamber|Size", meta = (ClampMin = 30, ClampMax = 250, Units = "cm"))
+	float Width = 80.f;
 
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Chamber|Size", meta = (ClampMin = 20, ClampMax = 150))
-	float GlassHeight = 56.f;
+	/** Inside depth of the glass, front to back (cm at scale 1). Round pods ignore it. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Chamber|Size", meta = (ClampMin = 30, ClampMax = 250, Units = "cm"))
+	float Depth = 64.f;
 
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Chamber|Size", meta = (ClampMin = 4, ClampMax = 30))
+	/** Height of the glass (cm at scale 1). */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Chamber|Size", meta = (ClampMin = 30, ClampMax = 250, Units = "cm"))
+	float GlassHeight = 105.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Chamber|Size", meta = (ClampMin = 4, ClampMax = 30, Units = "cm"))
 	float BaseHeight = 10.f;
 
-	/** Allowed uniform scale while resizing (min, max). */
+	/** Allowed uniform scale of the whole exhibit (min, max). */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Chamber|Size")
-	FVector2D ScaleRange = FVector2D(0.6f, 2.0f);
+	FVector2D ScaleRange = FVector2D(0.4f, 2.0f);
+
+	/** Smallest and largest inside size a resize handle allows (cm at scale 1). */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Chamber|Size")
+	FVector2D SizeRange = FVector2D(30.f, 250.f);
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Chamber|Look")
 	FLinearColor LightColor = FLinearColor(0.25f, 0.85f, 1.0f);
@@ -202,9 +297,13 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Chamber|Look")
 	FLinearColor FrameColor = FLinearColor(0.10f, 0.11f, 0.14f);
 
-	/** Adds the rock and crystal obstacles inside the chamber. */
+	/** Colour of the resize handles. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Chamber|Look")
-	bool bShowObstacles = true;
+	FLinearColor HandleColor = FLinearColor(0.35f, 0.95f, 1.0f);
+
+	/** Adds the rock and crystal obstacles inside the chamber (they get in the way of big model aliens). */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Chamber|Look")
+	bool bShowObstacles = false;
 
 	/** Optional material overrides. Empty = the /Game/AlienMuseum/Materials defaults. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Chamber|Look")
@@ -295,16 +394,38 @@ protected:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Chamber")
 	TObjectPtr<UTextRenderComponent> InfoBody;
 
+	/** "HEIGHT 105 cm" read-out next to the handle while resizing. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Chamber")
+	TObjectPtr<UTextRenderComponent> SizeLabel;
+
+	UPROPERTY(VisibleAnywhere, Category = "Chamber")
+	TArray<FChamberResizeHandle> ResizeHandles;
+
 private:
 	void BuildLayout();
+	void LayoutResizeHandles(const FVector2f& Half, float TopZ);
 	void ApplyMaterials();
 	/** Chamber colour: the occupant's ChamberLightColor if it has one, else LightColor. */
 	FLinearColor GetDesiredLightColor() const;
 	void ApplyLightColor();
 	void RefreshInfoText();
 	void UpdateVisualState();
-	void FaceInfoPanelToViewer(float DeltaSeconds);
-	float GetMovementRadiusLocal() const { return Radius - 3.f; }
+	void UpdateHandleVisuals();
+	void RefreshSizeLabel();
+	void FaceViewer(USceneComponent* Component, float DeltaSeconds, bool bInstant = false) const;
+
+	/** Inside half size of the glass in chamber space (X = depth, Y = width; a round pod uses its radius). */
+	FVector2f GetInnerHalfLocal() const;
+
+	/** Half size of the walkable floor in chamber space. */
+	FVector2f GetMoveHalfLocal() const;
+
+	const FChamberResizeHandle* FindHandle(const UPrimitiveComponent* Component) const;
+	float GetSizeAlong(EChamberResizeAxis Axis) const;
+	void SetSizeAlong(EChamberResizeAxis Axis, float NewSize);
+
+	/** Smallest size along an axis that still fits the occupant (cm at scale 1). */
+	float GetMinSizeAlong(EChamberResizeAxis Axis) const;
 
 	UPROPERTY(Transient)
 	TObjectPtr<AAlienCharacter> Occupant;
@@ -330,7 +451,13 @@ private:
 	UPROPERTY(Transient)
 	TObjectPtr<UMaterialInstanceDynamic> HoverMID;
 
-	/** Basic shapes used to switch between the square and round look. */
+	UPROPERTY(Transient)
+	TObjectPtr<UMaterialInstanceDynamic> HandleMID;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UMaterialInstanceDynamic> HandleHotMID;
+
+	/** Basic shapes used to switch between the box and round look. */
 	UPROPERTY()
 	TObjectPtr<UStaticMesh> CubeMesh;
 
@@ -354,4 +481,11 @@ private:
 	FVector GrabTargetLocation = FVector::ZeroVector;
 	float GrabTargetYaw = 0.f;
 	float GrabTargetScale = 1.f;
+
+	/** Pointers currently over the chamber (both hands can hover it). */
+	int32 HoverCount = 0;
+	TWeakObjectPtr<const UPrimitiveComponent> HotHandle;
+	TWeakObjectPtr<const UPrimitiveComponent> ResizeHandle;
+	EChamberResizeAxis ResizeAxis = EChamberResizeAxis::None;
+	float ResizeStartSize = 0.f;
 };
