@@ -19,6 +19,7 @@
 
 class UCameraComponent;
 class UMotionControllerComponent;
+class UStaticMesh;
 class UStaticMeshComponent;
 class UMaterialInstanceDynamic;
 class UInputMappingContext;
@@ -135,6 +136,20 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Museum")
 	float MenuHoldTime = 1.0f;
 
+	/**
+	 * Floating chambers: when the pointer hits no surface, a new chamber appears in mid-air this far
+	 * along the ray. Thumbstick forward/back (E/Q on desktop) changes it while placing.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Museum", meta = (Units = "cm"))
+	float FloatPlacementDistance = 120.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Museum")
+	FVector2D FloatPlacementRange = FVector2D(50.f, 400.f);
+
+	/** cm per second when changing FloatPlacementDistance with the thumbstick. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Museum")
+	float FloatDistanceSpeed = 120.f;
+
 protected:
 	virtual void BeginPlay() override;
 
@@ -220,7 +235,7 @@ private:
 	void ResetOneHandGrab(UMuseumHandInteractor* Hand, AAlienChamber* Chamber);
 	void UpdateGrabs(float DeltaSeconds);
 	void UpdateHover();
-	void UpdatePlacement();
+	void UpdatePlacement(float DeltaSeconds);
 	void UpdateMenuGesture(float DeltaSeconds);
 	void ConfirmPlacement();
 	void SetMode(EMuseumPawnMode NewMode);
@@ -238,6 +253,13 @@ private:
 	UPROPERTY(Transient)
 	TObjectPtr<UMaterialInstanceDynamic> GhostMID;
 
+	/** Ghost shapes for square cases and round pods. */
+	UPROPERTY()
+	TObjectPtr<UStaticMesh> GhostCubeMesh;
+
+	UPROPERTY()
+	TObjectPtr<UStaticMesh> GhostCylinderMesh;
+
 	EMuseumPawnMode Mode = EMuseumPawnMode::Default;
 	FHandGrab LeftGrab;
 	FHandGrab RightGrab;
@@ -250,6 +272,9 @@ private:
 	FVector TwoHandOffset = FVector::ZeroVector;
 
 	FMuseumSurfaceHit PlacementHit;
+	FVector PlacementLocation = FVector::ZeroVector; // bottom centre of the new chamber
+	bool bPlacementInAir = false;
+	bool bPlacementSpotOk = false;                  // a surface or open air (ignores other chambers)
 	bool bPlacementValid = false;
 	TWeakObjectPtr<AAlienChamber> PlacementTarget;
 

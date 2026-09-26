@@ -39,7 +39,10 @@ AMuseumPawn::AMuseumPawn()
 	AutoPossessPlayer = EAutoReceiveInput::Disabled;
 
 	static ConstructorHelpers::FObjectFinder<UStaticMesh> CylinderFinder(TEXT("/Engine/BasicShapes/Cylinder.Cylinder"));
+	static ConstructorHelpers::FObjectFinder<UStaticMesh> CubeFinder(TEXT("/Engine/BasicShapes/Cube.Cube"));
 	static ConstructorHelpers::FObjectFinder<UStaticMesh> SphereFinder(TEXT("/Engine/BasicShapes/Sphere.Sphere"));
+	GhostCubeMesh = CubeFinder.Object;
+	GhostCylinderMesh = CylinderFinder.Object;
 
 	USceneComponent* Root = CreateDefaultSubobject<USceneComponent>(TEXT("Root"));
 	RootComponent = Root;
@@ -81,9 +84,9 @@ AMuseumPawn::AMuseumPawn()
 	LeftReticle = MakeVisual(TEXT("LeftReticle"), SphereFinder.Object);
 	RightReticle = MakeVisual(TEXT("RightReticle"), SphereFinder.Object);
 
-	PlacementGhost = MakeVisual(TEXT("PlacementGhost"), CylinderFinder.Object);
+	PlacementGhost = MakeVisual(TEXT("PlacementGhost"), CubeFinder.Object);
 	PlacementGhost->SetUsingAbsoluteRotation(true);
-	PlacementGhost->SetWorldScale3D(FVector(0.66f, 0.66f, 0.72f)); // default chamber footprint
+	PlacementGhost->SetWorldScale3D(FVector(0.66f, 0.66f, 0.72f)); // default chamber size; matched to the chamber class while placing
 	PlacementGhost->SetTranslucentSortPriority(2);
 
 	LeftHand = CreateDefaultSubobject<UMuseumHandInteractor>(TEXT("LeftHand"));
@@ -704,7 +707,7 @@ void AMuseumPawn::UpdateHover()
 	}
 }
 
-void AMuseumPawn::UpdatePlacement()
+void AMuseumPawn::UpdatePlacement(float DeltaSeconds)
 {
 	if (Mode == EMuseumPawnMode::Default)
 	{
@@ -742,28 +745,66 @@ void AMuseumPawn::UpdatePlacement()
 	}
 	SetPlacementTarget(nullptr);
 
-	// Otherwise: a real surface for a new chamber.
-	PlacementHit = Director->GetScene()->RaycastSurface(Hand->GetAimOrigin(), Hand->GetAimDirection(), 600.f);
-	const float Footprint = 36.f;
-	bPlacementValid = PlacementHit.IsPlaceable()
+	// Otherwise: where a new chamber would go. A real surface under the ray wins; with floating
+	// chambers, pointing into open space puts it in mid-air FloatPlacementDistance along the ray.
+	const AAlienChamber* Template = Director->GetChamberTemplate();
+	const float HalfWidth = Template ? Template->GetHalfWidth() : 33.f;
+	const float Height = Template ? Template->GetTotalHeight() : 72.f;
+	const FVector Origin = Hand->GetAimOrigin();
+	const FVector Direction = Hand->GetAimDirection();
+
+	if (FMath::Abs(AdjustInput.Y) > 0.2f)
+	{
+		FloatPlacementDistance = FMath::Clamp(FloatPlacementDistance + AdjustInput.Y * FloatDistanceSpeed * DeltaSeconds,
+			FloatPlacementRange.X, FloatPlacementRange.Y);
+	}
+
+	PlacementHit = Director->GetScene()->RaycastSurface(Origin, Direction, 600.f);
+	bPlacementInAir = false;
+	bool bShowGhost = false;
+	FVector LaserEnd = Origin + Direction * 300.f;
+	if (PlacementHit.IsPlaceable() || (PlacementHit.bHit && !Director->bChambersFloat))
+	{
+		PlacementLocation = PlacementHit.Location;
+		LaserEnd = PlacementHit.Location;
+		bShowGhost = true;
+	}
+	else if (Director->bChambersFloat)
+	{
+		// The ray points at the middle of the floating chamber; it never goes below the floor.
+		LaserEnd = Origin + Direction * FloatPlacementDistance;
+		PlacementLocation = LaserEnd - FVector(0.f, 0.f, Height * 0.5f);
+		PlacementLocation.Z = FMath::Max(PlacementLocation.Z, Director->GetScene()->GetFloorZ());
+		bPlacementInAir = true;
+		bShowGhost = true;
+	}
+
+	bPlacementSpotOk = bPlacementInAir || PlacementHit.IsPlaceable();
+	bPlacementValid = bPlacementSpotOk
 		&& Director->CanAddChamber()
-		&& Director->IsPlacementFree(PlacementHit.Location, Footprint, nullptr);
+		&& Director->IsPlacementFree(PlacementLocation, HalfWidth + 3.f, nullptr);
 
 	const FLinearColor Color = bPlacementValid ? ValidColor : InvalidColor;
-	if (PlacementHit.bHit)
-	{
-		PlacementGhost->SetVisibility(true);
-		PlacementGhost->SetWorldLocationAndRotation(PlacementHit.Location + FVector(0.f, 0.f, 36.f), FRotator::ZeroRotator);
-		if (GhostMID)
-		{
-			GhostMID->SetVectorParameterValue(MuseumAssets::Params::Color, Color);
-		}
-		Hand->SetLaserOverride(PlacementHit.Location, Color);
-	}
-	else
+	Hand->SetLaserOverride(LaserEnd, bShowGhost ? Color : InvalidColor);
+	if (!bShowGhost)
 	{
 		PlacementGhost->SetVisibility(false);
-		Hand->SetLaserOverride(Hand->GetAimOrigin() + Hand->GetAimDirection() * 300.f, InvalidColor);
+		return;
+	}
+
+	// Same shape, size and facing as the chamber that will be spawned.
+	UStaticMesh* GhostMesh = (!Template || Template->Shape == EChamberShape::Square) ? GhostCubeMesh.Get() : GhostCylinderMesh.Get();
+	if (GhostMesh && PlacementGhost->GetStaticMesh() != GhostMesh)
+	{
+		PlacementGhost->SetStaticMesh(GhostMesh);
+	}
+	const float Yaw = (GetHeadLocation() - PlacementLocation).Rotation().Yaw;
+	PlacementGhost->SetVisibility(true);
+	PlacementGhost->SetWorldScale3D(FVector(2.f * HalfWidth, 2.f * HalfWidth, Height) / 100.f);
+	PlacementGhost->SetWorldLocationAndRotation(PlacementLocation + FVector(0.f, 0.f, Height * 0.5f), FRotator(0.f, Yaw, 0.f));
+	if (GhostMID)
+	{
+		GhostMID->SetVectorParameterValue(MuseumAssets::Params::Color, Color);
 	}
 }
 
@@ -788,16 +829,18 @@ void AMuseumPawn::ConfirmPlacement()
 
 	if (!bPlacementValid)
 	{
-		Director->SetStatusText(PlacementHit.bHit && !Director->CanAddChamber()
-			? TEXT("The museum is full. Remove a chamber first.")
+		Director->SetStatusText(!Director->CanAddChamber() ? TEXT("The museum is full. Remove a chamber first.")
+			: bPlacementSpotOk ? TEXT("Too close to another chamber.")
 			: TEXT("Can't place there. Aim at free floor or a table top."));
 		return;
 	}
 
-	const float Yaw = (Head - PlacementHit.Location).Rotation().Yaw;
-	Director->SpawnChamberAt(PlacementHit.Location, Yaw, Mode == EMuseumPawnMode::PlacingAlien ? PendingAlien.Get() : nullptr);
+	const float Yaw = (Head - PlacementLocation).Rotation().Yaw;
+	Director->SpawnChamberAt(PlacementLocation, Yaw, Mode == EMuseumPawnMode::PlacingAlien ? PendingAlien.Get() : nullptr);
 	SetMode(EMuseumPawnMode::Default);
-	Director->SetStatusText(TEXT("Chamber placed. Grab it to move, use two hands to resize."));
+	Director->SetStatusText(bPlacementInAir
+		? TEXT("Chamber floating in the air. Grab it to move, use two hands to resize.")
+		: TEXT("Chamber placed. Grab it to move, use two hands to resize."));
 }
 
 void AMuseumPawn::UpdateMenuGesture(float DeltaSeconds)
@@ -837,6 +880,6 @@ void AMuseumPawn::Tick(float DeltaSeconds)
 
 	UpdateGrabs(DeltaSeconds);
 	UpdateHover();
-	UpdatePlacement();
+	UpdatePlacement(DeltaSeconds);
 	UpdateMenuGesture(DeltaSeconds);
 }

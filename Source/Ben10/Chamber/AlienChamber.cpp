@@ -77,9 +77,12 @@ AAlienChamber::AAlienChamber()
 	PrimaryActorTick.bCanEverTick = true;
 
 	static ConstructorHelpers::FObjectFinder<UStaticMesh> CylinderFinder(TEXT("/Engine/BasicShapes/Cylinder.Cylinder"));
+	static ConstructorHelpers::FObjectFinder<UStaticMesh> CubeFinder(TEXT("/Engine/BasicShapes/Cube.Cube"));
 	static ConstructorHelpers::FObjectFinder<UStaticMesh> SphereFinder(TEXT("/Engine/BasicShapes/Sphere.Sphere"));
 	static ConstructorHelpers::FObjectFinder<UStaticMesh> ConeFinder(TEXT("/Engine/BasicShapes/Cone.Cone"));
 	static ConstructorHelpers::FObjectFinder<UStaticMesh> PlaneFinder(TEXT("/Engine/BasicShapes/Plane.Plane"));
+	CubeMesh = CubeFinder.Object;
+	CylinderMesh = CylinderFinder.Object;
 
 	Root = CreateDefaultSubobject<USceneComponent>(TEXT("Root"));
 	Root->SetMobility(EComponentMobility::Movable);
@@ -98,20 +101,25 @@ AAlienChamber::AAlienChamber()
 		return Comp;
 	};
 
-	// Base: the alien stands on it, so it blocks everything.
-	Base = MakeMesh(TEXT("Base"), CylinderFinder.Object, Root);
+	// Base: the alien stands on it, so it blocks everything. (Square is the default look;
+	// BuildLayout swaps the meshes when Shape is Round.)
+	Base = MakeMesh(TEXT("Base"), CubeFinder.Object, Root);
 	Base->SetCollisionProfileName(UCollisionProfile::BlockAllDynamic_ProfileName);
 
-	FloorGlow = MakeMesh(TEXT("FloorGlow"), CylinderFinder.Object, Root);
-	Glass = MakeMesh(TEXT("Glass"), CylinderFinder.Object, Root);
+	FloorGlow = MakeMesh(TEXT("FloorGlow"), CubeFinder.Object, Root);
+	Glass = MakeMesh(TEXT("Glass"), CubeFinder.Object, Root);
 	Glass->SetTranslucentSortPriority(1);
-	TopCap = MakeMesh(TEXT("TopCap"), CylinderFinder.Object, Root);
-	LightPanel = MakeMesh(TEXT("LightPanel"), CylinderFinder.Object, Root);
+	TopCap = MakeMesh(TEXT("TopCap"), CubeFinder.Object, Root);
+	LightPanel = MakeMesh(TEXT("LightPanel"), CubeFinder.Object, Root);
+
+	// Anti-gravity glow under the base, shown while the chamber floats in the air.
+	HoverGlow = MakeMesh(TEXT("HoverGlow"), CylinderFinder.Object, Root);
+	HoverGlow->SetVisibility(false);
 
 	FramePillars = CreateDefaultSubobject<UInstancedStaticMeshComponent>(TEXT("FramePillars"));
 	FramePillars->SetupAttachment(Root);
 	FramePillars->SetMobility(EComponentMobility::Movable);
-	FramePillars->SetStaticMesh(CylinderFinder.Object);
+	FramePillars->SetStaticMesh(CubeFinder.Object);
 	FramePillars->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 	FramePillars->SetCastShadow(false);
 	FramePillars->SetCanEverAffectNavigation(false);
@@ -145,16 +153,17 @@ AAlienChamber::AAlienChamber()
 	SpawnPoint->SetupAttachment(Root);
 	SpawnPoint->SetMobility(EComponentMobility::Movable);
 
-	// What the pointer ray hits (Visibility channel only).
-	SelectVolume = CreateDefaultSubobject<UCapsuleComponent>(TEXT("SelectVolume"));
-	SelectVolume->SetupAttachment(Root);
-	SelectVolume->SetMobility(EComponentMobility::Movable);
-	SelectVolume->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
-	SelectVolume->SetCollisionObjectType(ECC_WorldDynamic);
-	SelectVolume->SetCollisionResponseToAllChannels(ECR_Ignore);
-	SelectVolume->SetCollisionResponseToChannel(ECC_Visibility, ECR_Block);
-	SelectVolume->SetCanEverAffectNavigation(false);
-	SelectVolume->SetHiddenInGame(true);
+	// What the pointer ray hits (Visibility channel only). Property and component are named
+	// "SelectBox" because older saved Blueprints hold a capsule under the previous name "SelectVolume".
+	SelectBox = CreateDefaultSubobject<UBoxComponent>(TEXT("SelectBox"));
+	SelectBox->SetupAttachment(Root);
+	SelectBox->SetMobility(EComponentMobility::Movable);
+	SelectBox->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
+	SelectBox->SetCollisionObjectType(ECC_WorldDynamic);
+	SelectBox->SetCollisionResponseToAllChannels(ECR_Ignore);
+	SelectBox->SetCollisionResponseToChannel(ECC_Visibility, ECR_Block);
+	SelectBox->SetCanEverAffectNavigation(false);
+	SelectBox->SetHiddenInGame(true);
 
 	InteriorLight = CreateDefaultSubobject<UPointLightComponent>(TEXT("InteriorLight"));
 	InteriorLight->SetupAttachment(Root);
@@ -212,9 +221,24 @@ void AAlienChamber::OnConstruction(const FTransform& Transform)
 
 void AAlienChamber::BuildLayout()
 {
+	const bool bSquare = Shape == EChamberShape::Square;
 	const float R = Radius;
 	const float TopZ = BaseHeight + GlassHeight;
 	const float OuterD = 2.f * (R + FrameInset);
+
+	// Square display case or round pod: same parts, different basic shape.
+	UStaticMesh* ShellMesh = bSquare ? CubeMesh.Get() : CylinderMesh.Get();
+	for (UStaticMeshComponent* Part : { Base.Get(), FloorGlow.Get(), Glass.Get(), TopCap.Get(), LightPanel.Get() })
+	{
+		if (ShellMesh && Part->GetStaticMesh() != ShellMesh)
+		{
+			Part->SetStaticMesh(ShellMesh);
+		}
+	}
+	if (ShellMesh && FramePillars->GetStaticMesh() != ShellMesh)
+	{
+		FramePillars->SetStaticMesh(ShellMesh);
+	}
 
 	Base->SetRelativeLocation(FVector(0.f, 0.f, BaseHeight * 0.5f));
 	Base->SetRelativeScale3D(ShapeScale(OuterD, OuterD, BaseHeight));
@@ -231,26 +255,34 @@ void AAlienChamber::BuildLayout()
 	LightPanel->SetRelativeLocation(FVector(0.f, 0.f, TopZ - 0.6f));
 	LightPanel->SetRelativeScale3D(ShapeScale(2.f * R - 10.f, 2.f * R - 10.f, 1.f));
 
-	// Four frame pillars, one draw call.
+	// Four frame posts, one draw call: square corner posts or round pillars.
 	if (!IsTemplate())
 	{
 		FramePillars->ClearInstances();
 		for (int32 i = 0; i < 4; ++i)
 		{
 			const float Angle = FMath::DegreesToRadians(45.f + 90.f * i);
-			const FVector Location(FMath::Cos(Angle) * (R + 1.5f), FMath::Sin(Angle) * (R + 1.5f), BaseHeight + GlassHeight * 0.5f);
+			const float Distance = bSquare ? (R + 1.5f) * UE_SQRT_2 : R + 1.5f; // square: exactly on the corners
+			const FVector Location(FMath::Cos(Angle) * Distance, FMath::Sin(Angle) * Distance, BaseHeight + GlassHeight * 0.5f);
 			FramePillars->AddInstance(FTransform(FQuat::Identity, Location, ShapeScale(3.f, 3.f, GlassHeight)));
 		}
 	}
 
-	// Octagon of invisible walls just inside the glass.
+	// Invisible walls just inside the glass: 4 for a square case, an octagon for a round pod.
 	const float Apothem = R - 1.f;
-	const float HalfSide = Apothem * FMath::Tan(FMath::DegreesToRadians(180.f / NumWalls)) + 1.f;
+	const int32 ActiveWalls = bSquare ? 4 : NumWalls;
+	const float HalfSide = bSquare ? R + 1.f : Apothem * FMath::Tan(FMath::DegreesToRadians(180.f / NumWalls)) + 1.f;
 	for (int32 i = 0; i < ContainmentWalls.Num(); ++i)
 	{
-		const float AngleDeg = 360.f / NumWalls * i;
-		const float Angle = FMath::DegreesToRadians(AngleDeg);
 		UBoxComponent* Wall = ContainmentWalls[i];
+		const bool bActive = i < ActiveWalls;
+		Wall->SetCollisionEnabled(bActive ? ECollisionEnabled::QueryAndPhysics : ECollisionEnabled::NoCollision);
+		if (!bActive)
+		{
+			continue;
+		}
+		const float AngleDeg = 360.f / ActiveWalls * i;
+		const float Angle = FMath::DegreesToRadians(AngleDeg);
 		Wall->SetBoxExtent(FVector(1.f, HalfSide, GlassHeight * 0.5f));
 		Wall->SetRelativeLocation(FVector(FMath::Cos(Angle) * Apothem, FMath::Sin(Angle) * Apothem, BaseHeight + GlassHeight * 0.5f));
 		Wall->SetRelativeRotation(FRotator(0.f, AngleDeg, 0.f));
@@ -274,8 +306,11 @@ void AAlienChamber::BuildLayout()
 
 	SpawnPoint->SetRelativeLocation(FVector(0.f, 0.f, BaseHeight + 0.5f));
 
-	SelectVolume->SetCapsuleSize(R + FrameInset + 2.f, (TopZ + 6.f) * 0.5f + 2.f);
-	SelectVolume->SetRelativeLocation(FVector(0.f, 0.f, (TopZ + 6.f) * 0.5f));
+	SelectBox->SetBoxExtent(FVector(R + FrameInset + 2.f, R + FrameInset + 2.f, (TopZ + 6.f) * 0.5f + 2.f));
+	SelectBox->SetRelativeLocation(FVector(0.f, 0.f, (TopZ + 6.f) * 0.5f));
+
+	HoverGlow->SetRelativeLocation(FVector(0.f, 0.f, -0.6f));
+	HoverGlow->SetRelativeScale3D(ShapeScale(OuterD * 0.8f, OuterD * 0.8f, 0.6f));
 
 	InteriorLight->SetRelativeLocation(FVector(0.f, 0.f, TopZ - 8.f));
 	InteriorLight->SetAttenuationRadius(R * 2.5f);
@@ -297,6 +332,11 @@ void AAlienChamber::ApplyMaterials()
 	CrystalMID = EmissiveBase ? UMaterialInstanceDynamic::Create(EmissiveBase, this) : nullptr;
 	GlassMID = GlassBase ? UMaterialInstanceDynamic::Create(GlassBase, this) : nullptr;
 	HologramMID = HologramBase ? UMaterialInstanceDynamic::Create(HologramBase, this) : nullptr;
+	HoverMID = EmissiveBase ? UMaterialInstanceDynamic::Create(EmissiveBase, this) : nullptr;
+	if (HoverMID)
+	{
+		HoverGlow->SetMaterial(0, HoverMID);
+	}
 
 	if (MetalMID)
 	{
@@ -349,6 +389,10 @@ void AAlienChamber::ApplyLightColor()
 	if (HologramMID)
 	{
 		HologramMID->SetVectorParameterValue(MuseumAssets::Params::Color, ActiveLightColor * 0.6f);
+	}
+	if (HoverMID)
+	{
+		HoverMID->SetVectorParameterValue(MuseumAssets::Params::Color, ActiveLightColor);
 	}
 	InteriorLight->SetLightColor(ActiveLightColor);
 	UpdateVisualState();
@@ -458,7 +502,10 @@ bool AAlienChamber::IsInsideMovementBounds(const FVector& WorldLocation, float M
 	const float Scale = GetChamberScale();
 	const FVector Local = GetActorTransform().InverseTransformPosition(WorldLocation);
 	const float MaxR = GetMovementRadiusLocal() - Margin / Scale;
-	return Local.Size2D() <= MaxR
+	const bool bInsideFlat = Shape == EChamberShape::Square
+		? FMath::Max(FMath::Abs(Local.X), FMath::Abs(Local.Y)) <= MaxR
+		: Local.Size2D() <= MaxR;
+	return bInsideFlat
 		&& Local.Z >= BaseHeight - 20.f
 		&& Local.Z <= BaseHeight + GlassHeight + 10.f;
 }
@@ -470,7 +517,12 @@ FVector AAlienChamber::ClampToMovementBounds(const FVector& WorldLocation, float
 	FVector Local = T.InverseTransformPosition(WorldLocation);
 	const float MaxR = FMath::Max(0.f, GetMovementRadiusLocal() - Margin / Scale);
 	FVector2D Flat(Local.X, Local.Y);
-	if (Flat.Size() > MaxR)
+	if (Shape == EChamberShape::Square)
+	{
+		Flat.X = FMath::Clamp(Flat.X, -MaxR, MaxR);
+		Flat.Y = FMath::Clamp(Flat.Y, -MaxR, MaxR);
+	}
+	else if (Flat.Size() > MaxR)
 	{
 		Flat = Flat.GetSafeNormal() * MaxR;
 	}
@@ -489,27 +541,38 @@ bool AAlienChamber::FindRandomWanderPoint(const AAlienCharacter* Alien, FRandomS
 	const UCapsuleComponent* Capsule = Alien->GetCapsuleComponent();
 	const float CapsuleR = Capsule->GetScaledCapsuleRadius();
 	const float CapsuleHH = Capsule->GetScaledCapsuleHalfHeight();
-	const float MaxR = FMath::Max(0.f, GetMovementRadiusLocal() * Scale - CapsuleR - 1.f * Scale);
+	// Walkable half-size in chamber space (keeps the whole body away from the glass).
+	const float MaxLocal = FMath::Max(0.f, GetMovementRadiusLocal() - (CapsuleR + 1.f * Scale) / Scale);
 	const FVector Start = Alien->GetActorLocation();
-	const FVector Center = GetActorLocation();
+	const FTransform& T = GetActorTransform();
 
 	// Slightly thinner capsule, lifted off the floor so the sweep does not hit the base.
-	const FCollisionShape Shape = FCollisionShape::MakeCapsule(CapsuleR * 0.9f, CapsuleHH * 0.85f);
+	const FCollisionShape SweepShape = FCollisionShape::MakeCapsule(CapsuleR * 0.9f, CapsuleHH * 0.85f);
 	const FVector Lift(0.f, 0.f, 3.f * Scale);
 	FCollisionQueryParams QueryParams(SCENE_QUERY_STAT(AlienWander), false, Alien);
 
 	for (int32 Attempt = 0; Attempt < 10; ++Attempt)
 	{
-		const float Angle = Rng.FRandRange(0.f, 2.f * PI);
-		const float Distance = MaxR * FMath::Sqrt(Rng.FRand());
-		const FVector Candidate(Center.X + FMath::Cos(Angle) * Distance, Center.Y + FMath::Sin(Angle) * Distance, Start.Z);
+		FVector2D Local;
+		if (Shape == EChamberShape::Square)
+		{
+			Local = FVector2D(Rng.FRandRange(-MaxLocal, MaxLocal), Rng.FRandRange(-MaxLocal, MaxLocal));
+		}
+		else
+		{
+			const float Angle = Rng.FRandRange(0.f, 2.f * PI);
+			const float Distance = MaxLocal * FMath::Sqrt(Rng.FRand());
+			Local = FVector2D(FMath::Cos(Angle) * Distance, FMath::Sin(Angle) * Distance);
+		}
+		FVector Candidate = T.TransformPosition(FVector(Local.X, Local.Y, BaseHeight));
+		Candidate.Z = Start.Z;
 		if (FVector::Dist2D(Candidate, Start) < 6.f * Scale)
 		{
 			continue; // not worth walking to
 		}
 
 		FHitResult Hit;
-		const bool bBlocked = World->SweepSingleByChannel(Hit, Start + Lift, Candidate + Lift, FQuat::Identity, ECC_Pawn, Shape, QueryParams);
+		const bool bBlocked = World->SweepSingleByChannel(Hit, Start + Lift, Candidate + Lift, FQuat::Identity, ECC_Pawn, SweepShape, QueryParams);
 		if (!bBlocked)
 		{
 			OutPoint = Candidate;
@@ -531,7 +594,17 @@ float AAlienChamber::GetFloorZ() const
 
 float AAlienChamber::GetOuterRadius() const
 {
+	return Shape == EChamberShape::Square ? GetHalfWidth() * UE_SQRT_2 : GetHalfWidth();
+}
+
+float AAlienChamber::GetHalfWidth() const
+{
 	return (Radius + FrameInset) * GetChamberScale();
+}
+
+float AAlienChamber::GetTotalHeight() const
+{
+	return (BaseHeight + GlassHeight + 6.f) * GetChamberScale();
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -553,7 +626,18 @@ float AAlienChamber::DistanceToChamber(const FVector& WorldPoint) const
 	const float Scale = GetChamberScale();
 	const FVector Local = GetActorTransform().InverseTransformPosition(WorldPoint);
 	const float TopZ = BaseHeight + GlassHeight + 6.f;
-	const float Radial = FMath::Max(0.f, Local.Size2D() - (Radius + FrameInset));
+	const float Half = Radius + FrameInset;
+	float Radial;
+	if (Shape == EChamberShape::Square)
+	{
+		const float DX = FMath::Max(0.f, FMath::Abs(static_cast<float>(Local.X)) - Half);
+		const float DY = FMath::Max(0.f, FMath::Abs(static_cast<float>(Local.Y)) - Half);
+		Radial = FMath::Sqrt(DX * DX + DY * DY);
+	}
+	else
+	{
+		Radial = FMath::Max(0.f, static_cast<float>(Local.Size2D()) - Half);
+	}
 	const float Vertical = Local.Z < 0.f ? -Local.Z : FMath::Max(0.f, Local.Z - TopZ);
 	return FMath::Sqrt(Radial * Radial + Vertical * Vertical) * Scale;
 }
@@ -565,15 +649,17 @@ void AAlienChamber::BeginGrab()
 		return;
 	}
 	bGrabbed = true;
-	GrabTargetLocation = GetActorLocation();
-	GrabTargetYaw = GetActorRotation().Yaw;
-	GrabTargetScale = GetChamberScale();
+	bMovedSinceGrab = false;
+	GrabStartLocation = GrabTargetLocation = GetActorLocation();
+	GrabStartYaw = GrabTargetYaw = GetActorRotation().Yaw;
+	GrabStartScale = GrabTargetScale = GetChamberScale();
 	if (Occupant)
 	{
 		Occupant->SetHeld(true);
 	}
 	UpdateVisualState();
-	OnGrabbed.Broadcast(this);
+	// OnGrabbed fires from UpdateGrab once the chamber really moves, so a simple click keeps
+	// the chamber's spatial anchor.
 }
 
 void AAlienChamber::UpdateGrab(const FVector& TargetLocation, float TargetYaw, float TargetScale)
@@ -581,6 +667,19 @@ void AAlienChamber::UpdateGrab(const FVector& TargetLocation, float TargetYaw, f
 	GrabTargetLocation = TargetLocation;
 	GrabTargetYaw = TargetYaw;
 	GrabTargetScale = FMath::Clamp(TargetScale, ScaleRange.X, ScaleRange.Y);
+
+	if (!bMovedSinceGrab)
+	{
+		// Small enough to feel instant, big enough to ignore hand jitter during a click.
+		const bool bMoved = FVector::Dist(GrabTargetLocation, GrabStartLocation) > 3.f
+			|| FMath::Abs(FRotator::NormalizeAxis(GrabTargetYaw - GrabStartYaw)) > 3.f
+			|| FMath::Abs(GrabTargetScale - GrabStartScale) > 0.02f;
+		if (bMoved)
+		{
+			bMovedSinceGrab = true;
+			OnGrabbed.Broadcast(this);
+		}
+	}
 }
 
 void AAlienChamber::EndGrab()
@@ -590,11 +689,27 @@ void AAlienChamber::EndGrab()
 		return;
 	}
 	bGrabbed = false;
-	SetActorLocationAndRotation(GrabTargetLocation, FRotator(0.f, GrabTargetYaw, 0.f));
-	SetChamberScale(GrabTargetScale);
-	// The occupant stays attached until NotifyPlaced(), so it rides along while the director
-	// drops the chamber onto the surface below.
+	bLastGrabMoved = bMovedSinceGrab;
+	if (bMovedSinceGrab)
+	{
+		SetActorLocationAndRotation(GrabTargetLocation, FRotator(0.f, GrabTargetYaw, 0.f));
+		SetChamberScale(GrabTargetScale);
+	}
+	else
+	{
+		// Just a click: put back any jitter so the chamber stays exactly on its anchor.
+		SetActorLocationAndRotation(GrabStartLocation, FRotator(0.f, GrabStartYaw, 0.f));
+		SetChamberScale(GrabStartScale);
+	}
+	// The occupant stays attached until NotifyPlaced(), so it rides along if the director
+	// still has to adjust the chamber's position.
 	UpdateVisualState();
+}
+
+void AAlienChamber::SetFloating(bool bInFloating)
+{
+	bFloating = bInFloating;
+	HoverGlow->SetVisibility(bFloating);
 }
 
 void AAlienChamber::NotifyPlaced()
@@ -704,6 +819,13 @@ void AAlienChamber::Tick(float DeltaSeconds)
 	if (bInfoVisible)
 	{
 		FaceInfoPanelToViewer(DeltaSeconds);
+	}
+
+	// Slow "anti-gravity" breathing under a floating chamber.
+	if (bFloating && HoverMID)
+	{
+		HoverTime += DeltaSeconds;
+		HoverMID->SetScalarParameterValue(MuseumAssets::Params::Intensity, 1.4f + 0.8f * FMath::Sin(HoverTime * 2.f * PI * 0.4f));
 	}
 
 	// Light pulse when a new alien arrives.

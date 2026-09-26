@@ -29,7 +29,7 @@ public:
 	/** The director of the world WorldContext belongs to (nullptr if none is placed). */
 	static AMuseumDirector* Get(const UObject* WorldContext);
 
-	/** Spawns a chamber standing on FloorLocation. Optionally puts an alien inside. */
+	/** Spawns a chamber whose bottom is at FloorLocation (a surface, or mid-air when chambers float). Optionally puts an alien inside. */
 	UFUNCTION(BlueprintCallable, Category = "Museum")
 	AAlienChamber* SpawnChamberAt(const FVector& FloorLocation, float Yaw, UAlienDataAsset* Alien = nullptr);
 
@@ -43,7 +43,10 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Museum")
 	void ClearMuseum();
 
-	/** After a chamber was put down: drop it onto the surface below, then save/anchor it. */
+	/**
+	 * After a chamber was put down: keep it where it was released (floating) or drop it onto the
+	 * surface below, then save/anchor it. Does nothing to a chamber that was only clicked.
+	 */
 	UFUNCTION(BlueprintCallable, Category = "Museum")
 	void SettleChamber(AAlienChamber* Chamber);
 
@@ -63,9 +66,12 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Museum")
 	bool CanAddChamber() const;
 
-	/** True if a chamber of this radius at FloorLocation would not overlap another chamber. */
+	/** True if a new chamber of this radius with its bottom at FloorLocation would not overlap another chamber. */
 	UFUNCTION(BlueprintPure, Category = "Museum")
 	bool IsPlacementFree(const FVector& FloorLocation, float Radius, const AAlienChamber* Ignore) const;
+
+	/** Default object of ChamberClass: size and shape of the chambers that will be spawned. */
+	const AAlienChamber* GetChamberTemplate() const;
 
 	UFUNCTION(BlueprintPure, Category = "Museum")
 	TArray<AAlienChamber*> GetChambers() const;
@@ -112,6 +118,18 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Museum")
 	float StartupDelay = 0.75f;
 
+	/** No gravity: chambers stay where they are released, even in mid-air. Off = they drop onto the surface below. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Museum")
+	bool bChambersFloat = true;
+
+	/** A floating chamber released this close above a real surface is set down onto it. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Museum", meta = (Units = "cm", ClampMin = 0))
+	float SurfaceSnapDistance = 5.f;
+
+	/** Restored chambers wait this long for their anchor pose to settle before the alien appears. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Museum", meta = (Units = "s", ClampMin = 0))
+	float RestoredAlienDelay = 1.f;
+
 protected:
 	virtual void BeginPlay() override;
 
@@ -136,6 +154,12 @@ private:
 	void SpawnStarterChamber();
 	void PushOutOfOtherChambers(AAlienChamber* Chamber) const;
 	bool GetViewer(FVector& OutHead, FRotator& OutRotation) const;
+
+	/** Z of a real surface at (or slightly into / just below) the chamber's bottom, if there is one. */
+	bool FindSurfaceUnderChamber(const AAlienChamber* Chamber, float MaxGap, float& OutZ) const;
+
+	/** Shows the anti-gravity glow when nothing real is directly under the chamber. */
+	void UpdateFloatingState(AAlienChamber* Chamber) const;
 
 	UPROPERTY(Transient)
 	TArray<TObjectPtr<AAlienChamber>> Chambers;

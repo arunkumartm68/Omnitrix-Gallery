@@ -1,8 +1,8 @@
 # Alien Museum – developer guide
 
 Mixed-reality alien museum for **Meta Quest 3S** (UE 5.7.4, Epic Native OpenXR + Meta XR plugin 1.205, MRUK).
-The player sees their real room through passthrough, places glass museum chambers on the floor or on
-furniture, and fills them with autonomous aliens chosen from a holographic collection.
+The player sees their real room through passthrough, places square glass display cases on the floor, on
+furniture or floating in mid-air, and fills them with autonomous aliens chosen from a holographic collection.
 
 ## Architecture
 
@@ -12,11 +12,12 @@ UAlienDataAsset (DA_Alien_*)          identity, look, behaviour tuning
         └─ AAlienAIController                  state machine: Idle / Wander / LookAround / ReactToPlayer / Held
              └─ CharacterMovementComponent     direct steering inside the chamber (no navmesh needed)
 
-AAlienChamber (BP_AlienChamber)
+AAlienChamber (BP_AlienChamber)                   Shape: Square (display case, default) or Round (pod)
    ├─ Base, FloorGlow, Glass, TopCap, LightPanel, FramePillars (1 instanced draw call)
-   ├─ ContainmentWalls (8 boxes) + Ceiling         block only the alien, never the pointer
+   ├─ ContainmentWalls (4 boxes square / 8 round) + Ceiling   block only the alien, never the pointer
    ├─ ObstacleRock / ObstacleCrystal               things the alien walks around
-   ├─ MovementBounds, SpawnPoint, SelectVolume
+   ├─ MovementBounds, SpawnPoint, SelectBox
+   ├─ HoverGlow (anti-gravity glow, only while floating in the air)
    ├─ InfoRoot (holographic info panel)
    ├─ InteriorLight (optional real light, off by default)
    └─ spatial anchor component (added at runtime by UMuseumPersistenceComponent)
@@ -67,7 +68,7 @@ level's editor-only furniture (tag `MuseumEditorRoom`) stands in for your room.
 | Left mouse | select UI / place / click a chamber (info panel) / hold on a chamber to carry it |
 | Right mouse | grab / carry a chamber |
 | Z / C | rotate carried chamber |
-| Q / E | shrink / grow carried chamber |
+| Q / E | shrink / grow carried chamber; while placing a new chamber in the air: closer / farther |
 | Tab | open / close the Alien Collection |
 
 ## Deploy to Quest 3S
@@ -85,6 +86,15 @@ level's editor-only furniture (tag `MuseumEditorRoom`) stands in for your room.
 Controls on the headset: point + **trigger / pinch** to select, **grip** or pinch on a chamber to carry it,
 both hands to scale/rotate, thumbstick while carrying to rotate/resize, **Y / B / Menu** (or left-hand
 pinch-and-hold 1 s) to open the collection.
+
+**Floating chambers (no gravity).** A carried chamber stays exactly where it is let go, also in mid-air
+(a glowing disc appears under it). It is only set down when released within 5 cm above a real surface
+or partly inside one, and it never goes below the floor. When placing a new chamber, pointing at a floor or
+table puts it there; pointing into open space shows the ghost in the air 1.2 m along the ray (thumbstick
+forward/back changes the distance). Floating chambers may be stacked above each other. Turn the whole
+feature off with `BP_MuseumDirector` → *Chambers Float* (chambers then drop onto the surface below).
+A click on a chamber (info panel) does not move it and keeps its spatial anchor; only a real move
+re-anchors it.
 
 ## Tuning without code
 
@@ -106,10 +116,13 @@ pinch-and-hold 1 s) to open the collection.
 > **Fan content:** Ben 10 and its aliens belong to Cartoon Network / Warner Bros. Discovery. The classic
 > aliens are simple fan-made figures for private use. Do not publish or distribute the app with them
 > (for example on the Meta Horizon Store) without a licence – use original aliens instead.
-* **Chamber** – `BP_AlienChamber`: radius, heights, scale range, colours, obstacles, real interior light.
-* **Director** – `BP_MuseumDirector` in the level: collection, starter chamber, max chambers,
-  scene options (occluder labels, debug room view, passthrough), persistence options.
-* **Pawn** – `BP_MuseumPawn`: grab distance, click timing, rotate/scale speeds, optional input assets.
+* **Chamber** – `BP_AlienChamber`: shape (Square / Round), half-width (`Radius`), heights, scale range,
+  colours, obstacles, real interior light.
+* **Director** – `BP_MuseumDirector` in the level: collection, starter chamber, max chambers, chambers float,
+  surface snap distance, restored-alien delay, scene options (occluder labels, debug room view,
+  passthrough), persistence options.
+* **Pawn** – `BP_MuseumPawn`: grab distance, click timing, rotate/scale speeds, mid-air placement distance
+  and range, optional input assets.
 
 ## Quest performance choices
 

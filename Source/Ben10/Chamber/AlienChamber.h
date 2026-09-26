@@ -1,20 +1,22 @@
-// Alien Museum - a glass museum pod that holds one alien.
+// Alien Museum - a glass museum case that holds one alien (square display case or round pod).
 //
 //  AAlienChamber
 //   ├── Base (metal, the alien walks on it)
 //   ├── FloorGlow / LightPanel (emissive, fake interior lighting)
 //   ├── Glass (translucent, no collision)
-//   ├── Frame pillars (one instanced mesh = one draw call) + TopCap
-//   ├── ContainmentWalls (8 invisible boxes + ceiling, block only pawns)
+//   ├── Frame posts (one instanced mesh = one draw call) + TopCap
+//   ├── ContainmentWalls (4 or 8 invisible boxes + ceiling, block only pawns)
 //   ├── Obstacles (rock + crystal the alien walks around)
 //   ├── MovementBounds (where the alien may walk)
 //   ├── SpawnPoint
-//   ├── SelectVolume (what the pointer ray hits)
+//   ├── SelectBox (what the pointer ray hits)
+//   ├── HoverGlow (anti-gravity glow under the base while floating in the air)
 //   ├── InfoRoot (holographic info panel)
 //   └── InteriorLight (optional real point light, off by default for Quest performance)
 //
-// The actor origin is the centre of the base at floor level, so placing it on a surface only
-// needs the hit location. Spatial anchors are added by UMuseumPersistenceComponent.
+// The actor origin is the centre of the underside of the base, so placing it on a surface only
+// needs the hit location. Chambers have no gravity: they can also float in mid-air.
+// Spatial anchors are added by UMuseumPersistenceComponent.
 
 #pragma once
 
@@ -33,8 +35,16 @@ class UMaterialInterface;
 class UMaterialInstanceDynamic;
 class UAlienDataAsset;
 class AAlienCharacter;
+class UStaticMesh;
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnAlienChamberEvent, AAlienChamber*, Chamber);
+
+UENUM(BlueprintType)
+enum class EChamberShape : uint8
+{
+	Square UMETA(ToolTip = "Box-shaped glass display case"),
+	Round UMETA(ToolTip = "Cylindrical glass pod")
+};
 
 UCLASS()
 class BEN10_API AAlienChamber : public AActor, public IMuseumInteractable
@@ -64,10 +74,10 @@ public:
 
 	// ---------- Movement boundary (used by the alien) ----------
 
-	/** True if WorldLocation is inside the walkable disc. Margin shrinks (positive) or grows (negative) it. */
+	/** True if WorldLocation is inside the walkable area. Margin shrinks (positive) or grows (negative) it. */
 	bool IsInsideMovementBounds(const FVector& WorldLocation, float Margin = 0.f) const;
 
-	/** Closest point inside the walkable disc (kept at the chamber floor height). */
+	/** Closest point inside the walkable area (kept at the chamber floor height). */
 	FVector ClampToMovementBounds(const FVector& WorldLocation, float Margin = 0.f) const;
 
 	/** Random reachable point for the alien, checked against obstacles with a capsule sweep. */
@@ -79,9 +89,17 @@ public:
 	/** World Z of the surface the alien walks on. */
 	float GetFloorZ() const;
 
-	/** World-space radius of the outer shell, used to keep chambers from overlapping. */
+	/** World-space radius around the outer shell (half diagonal for square cases), used to keep chambers apart. */
 	UFUNCTION(BlueprintPure, Category = "Chamber")
 	float GetOuterRadius() const;
+
+	/** World-space half width of the outer shell (the radius for a round pod). */
+	UFUNCTION(BlueprintPure, Category = "Chamber")
+	float GetHalfWidth() const;
+
+	/** World-space height from the underside of the base to the top of the cap. */
+	UFUNCTION(BlueprintPure, Category = "Chamber")
+	float GetTotalHeight() const;
 
 	// ---------- Grabbing (driven by AMuseumPawn) ----------
 
@@ -107,8 +125,19 @@ public:
 	/** Distance from a world point to the chamber shell (0 when inside). Used for "near grab". */
 	float DistanceToChamber(const FVector& WorldPoint) const;
 
-	/** Called by the director once the chamber is settled on a surface (spawn or release). */
+	/** True if the last grab actually moved, turned or resized the chamber (false for a simple click). */
+	UFUNCTION(BlueprintPure, Category = "Chamber|Grab")
+	bool WasMovedByLastGrab() const { return bLastGrabMoved; }
+
+	/** Called by the director once the chamber is settled (spawn or release). */
 	void NotifyPlaced();
+
+	/** Shows the anti-gravity glow under the base (chamber floating in the air). */
+	UFUNCTION(BlueprintCallable, Category = "Chamber")
+	void SetFloating(bool bInFloating);
+
+	UFUNCTION(BlueprintPure, Category = "Chamber")
+	bool IsFloating() const { return bFloating; }
 
 	// ---------- Visual state ----------
 
@@ -128,10 +157,11 @@ public:
 
 	// ---------- Events ----------
 
-	/** Chamber was spawned or put down (after snapping). */
+	/** Chamber was spawned or put down. */
 	UPROPERTY(BlueprintAssignable, Category = "Chamber")
 	FOnAlienChamberEvent OnPlaced;
 
+	/** Fires once per grab, when the held chamber actually starts to move (not for a simple click). */
 	UPROPERTY(BlueprintAssignable, Category = "Chamber")
 	FOnAlienChamberEvent OnGrabbed;
 
@@ -148,7 +178,11 @@ public:
 
 	// ---------- Designer settings ----------
 
-	/** Inner radius of the glass (cm, at scale 1). */
+	/** Square display case or round pod. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Chamber|Size")
+	EChamberShape Shape = EChamberShape::Square;
+
+	/** Inner half-width of the glass for square cases, inner radius for round pods (cm, at scale 1). */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Chamber|Size", meta = (ClampMin = 15, ClampMax = 80))
 	float Radius = 30.f;
 
@@ -241,7 +275,10 @@ protected:
 	TObjectPtr<USceneComponent> SpawnPoint;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Chamber")
-	TObjectPtr<UCapsuleComponent> SelectVolume;
+	TObjectPtr<UBoxComponent> SelectBox;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Chamber")
+	TObjectPtr<UStaticMeshComponent> HoverGlow;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Chamber")
 	TObjectPtr<UPointLightComponent> InteriorLight;
@@ -290,10 +327,27 @@ private:
 	UPROPERTY(Transient)
 	TObjectPtr<UMaterialInstanceDynamic> CrystalMID;
 
+	UPROPERTY(Transient)
+	TObjectPtr<UMaterialInstanceDynamic> HoverMID;
+
+	/** Basic shapes used to switch between the square and round look. */
+	UPROPERTY()
+	TObjectPtr<UStaticMesh> CubeMesh;
+
+	UPROPERTY()
+	TObjectPtr<UStaticMesh> CylinderMesh;
+
 	FGuid ChamberId;
 	FLinearColor ActiveLightColor = FLinearColor(0.25f, 0.85f, 1.0f);
 	float PulseTime = 0.f; // > 0 while the "new occupant" light pulse plays
+	float HoverTime = 0.f;
+	bool bFloating = false;
 	bool bGrabbed = false;
+	bool bMovedSinceGrab = false;
+	bool bLastGrabMoved = false;
+	FVector GrabStartLocation = FVector::ZeroVector;
+	float GrabStartYaw = 0.f;
+	float GrabStartScale = 1.f;
 	bool bHighlighted = false;
 	bool bValidTargetHighlight = true;
 	bool bInfoVisible = false;
