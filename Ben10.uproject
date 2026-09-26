@@ -1,6 +1,6 @@
 {
 	"FileVersion": 3,
-	"EngineAssociation": "{CDE4F980-487C-7C7F-3BBA-1B8ACFE0B1EF}",
+	"EngineAssociation": "5.7",
 	"Category": "",
 	"Description": "Alien Museum - mixed reality museum for Meta Quest 3S",
 	"Modules": [
