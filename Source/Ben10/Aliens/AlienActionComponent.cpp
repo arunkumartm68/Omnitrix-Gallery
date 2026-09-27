@@ -97,6 +97,7 @@ void UAlienActionComponent::Setup(const UAlienDataAsset* Data)
 	Height = Data->Height;
 	WalkSpeed = Data->WalkSpeed;
 	bSpeedTrail = Data->bSpeedTrail;
+	bHovers = Data->bHovers;
 	if (Data->bHeadFlames)
 	{
 		BuildFlames();
@@ -306,6 +307,7 @@ void UAlienActionComponent::TickComponent(float DeltaTime, ELevelTick TickType, 
 	if (Alien->WasRecentlyRendered(0.3f))
 	{
 		UpdateFlames(DeltaTime);
+		UpdateFootsteps(DeltaTime);
 
 		// XLR8: after-images whenever it runs fast (the dash makes its own).
 		const bool bDashing = bPerforming && Current == EAlienAction::Dash;
@@ -2165,6 +2167,57 @@ void UAlienActionComponent::UpdateFlames(float Dt)
 			FxStates[Index].Velocity = FVector(Rng.FRandRange(-0.15f, 0.15f), Rng.FRandRange(-0.15f, 0.15f), Rng.FRandRange(0.5f, 0.9f)) * H;
 			FxStates[Index].Gravity = -H * 0.3f;
 		}
+	}
+}
+
+// ---------------------------------------------------------------------------------------------
+// Footsteps
+// ---------------------------------------------------------------------------------------------
+
+void UAlienActionComponent::UpdateFootsteps(float Dt)
+{
+	const UChamberHabitatComponent* Home = GetHabitat();
+	const UChamberHabitatAsset* HomeWorld = Home ? Home->GetAsset() : nullptr;
+	const UCharacterMovementComponent* Move = Alien->GetCharacterMovement();
+	const float Speed = static_cast<float>(Alien->GetVelocity().Size2D());
+	if (!HomeWorld || bHovers || Alien->IsHeld() || !Body->IsBodyVisible() || !Move->IsMovingOnGround()
+		|| Speed < 0.25f * Move->MaxWalkSpeed || (bPerforming && Current != EAlienAction::Scurry && Current != EAlienAction::Dash))
+	{
+		FootstepDistance = 0.f;
+		return;
+	}
+	const float H = WorldHeight();
+	FootstepDistance += Speed * Dt;
+	if (FootstepDistance < 0.35f * H)
+	{
+		return;
+	}
+	FootstepDistance = 0.f;
+	bLeftFoot = !bLeftFoot;
+	const FVector Foot = Feet() + Alien->GetActorRightVector() * ((bLeftFoot ? -0.12f : 0.12f) * H);
+	switch (HomeWorld->Ground)
+	{
+	case EHabitatGround::Water:
+		GroundRing(FVector(Foot.X, Foot.Y, WaterSurfaceZ()), H * 0.1f, H * 0.45f, DustColor(), 0.7f, 0.45f);
+		break;
+	case EHabitatGround::Lava:
+		Burst(Foot + FVector(0.f, 0.f, H * 0.02f), 2, H * 0.015f, H * 0.6f, EmberColor, 0.5f, -H * 0.3f, 1.5f);
+		break;
+	case EHabitatGround::Tech:
+	case EHabitatGround::Crystal:
+	case EHabitatGround::None:
+		break;
+	default:
+	{
+		// Soft dust, lower and fainter than a move's puff.
+		const int32 Index = SpawnFx(EFx::Sphere, Foot + FVector(0.f, 0.f, H * 0.02f), FQuat::Identity, FVector(H * 0.04f),
+			FVector(H * 0.12f, H * 0.12f, H * 0.06f), DustColor(), 0.6f, 0.25f, 0.6f);
+		if (FxStates.IsValidIndex(Index))
+		{
+			FxStates[Index].Velocity = (FVector(0.f, 0.f, 0.15f) - Alien->GetVelocity().GetSafeNormal2D() * 0.25f) * H;
+		}
+		break;
+	}
 	}
 }
 

@@ -6,12 +6,13 @@ Alien Museum - home-world habitats and signature moves for the aliens (UE 5.7 Py
 
 Run it after import_downloaded_models.py (that script resets the model aliens' data). It
   1. creates / updates one ChamberHabitatAsset per home world in /Game/AlienMuseum/Data/Habitats,
-  2. imports Four Arms' flex pose (SourceArt/Converted/FourArms_2_Flex.glb from blender_pose_fourarms.py)
-     and Cannonbolt's ball form (CannonboltBall.glb, from the Wii "cannonbolt and ball" download),
+  2. imports the re-posed meshes listed in SourceArt/Converted/poses.json (blender_pose_models.py):
+     Four Arms' flex pose, and the relaxed arms-down Four Arms and Wildvine that replace their
+     T-pose models - plus Cannonbolt's ball form (CannonboltBall.glb, from the Wii download),
   3. gives every model and classic alien its habitat, signature moves, effect colour and extras
      (Heatblast's head flames, XLR8's speed trail and top speed, Cannonbolt's ball),
-  4. adds the classic Heatblast to the model collection (no model was downloaded for him); the
-     classic Stinkfly is replaced by the downloaded Stinkfly model.
+  4. keeps the classic Heatblast and the classic Stinkfly out of the model collection (the
+     downloaded Stinkfly replaces the classic one; Heatblast was taken out of the museum).
 
 Moves follow what the aliens do in Ben 10 (Cartoon Network): Cannonbolt rolls into a ball, XLR8 runs
 at super speed, Heatblast is on fire, Four Arms shows off his strength, Diamondhead grows crystals,
@@ -32,8 +33,9 @@ HABITAT_FOLDER = "/Game/AlienMuseum/Data/Habitats"
 MODEL_FOLDER = "/Game/AlienMuseum/Data/Models"
 CLASSIC_FOLDER = "/Game/AlienMuseum/Data/Classic"
 COLLECTION = f"{MODEL_FOLDER}/DA_AlienCollection_Models"
-FLEX_GLB = r"C:/Games/Ben10/SourceArt/Converted/FourArms_2_Flex.glb"
+POSES_JSON = r"C:/Games/Ben10/SourceArt/Converted/poses.json"
 BALL_GLB = r"C:/Games/Ben10/SourceArt/Converted/CannonboltBall.glb"
+LEFT_OUT = {"DA_Classic_Stinkfly", "DA_Classic_Heatblast"}
 
 EAL = unreal.EditorAssetLibrary
 S = unreal.AlienPartShape
@@ -193,7 +195,7 @@ def alien_key(asset_name):
     return parts[0] if len(parts) > 1 and parts[-1].isdigit() else stem
 
 
-def apply_moves(da, habitats, pose_mesh, ball_mesh):
+def apply_moves(da, habitats, poses, ball_mesh):
     key = alien_key(da.get_name())
     if key not in MOVES:
         print("NO MOVES FOR", da.get_name())
@@ -208,8 +210,14 @@ def apply_moves(da, habitats, pose_mesh, ball_mesh):
     for prop_name in ("walk_speed", "energy"):
         if prop_name in extras:
             da.set_editor_property(prop_name, extras[prop_name])
-    if da.get_name() == "DA_Model_FourArms_2" and pose_mesh:
-        da.set_editor_property("pose_mesh", pose_mesh)
+    posed = poses.get(da.get_name().replace("DA_Model_", ""), {})
+    if "pose" in posed:
+        da.set_editor_property("pose_mesh", posed["pose"][0])
+    if "model" in posed:
+        mesh, height = posed["model"]
+        da.set_editor_property("model_mesh", mesh)  # relaxed arms-down version of the T-pose model
+        if height:
+            da.set_editor_property("height", float(height))
     if key == "Cannonbolt" and ball_mesh:
         da.set_editor_property("ball_mesh", ball_mesh)  # rolls up into the Wii model's ball
     EAL.save_loaded_asset(da)
@@ -217,36 +225,33 @@ def apply_moves(da, habitats, pose_mesh, ball_mesh):
     return True
 
 
-def share_rest_materials(pose_mesh, rest_mesh):
-    """The pose is the same model: use the rest model's materials and drop the imported duplicates."""
-    rest_slots = rest_mesh.get_editor_property("static_materials")
-    slot_count = len(pose_mesh.get_editor_property("static_materials"))
-    for index in range(slot_count):
-        rest = rest_slots[min(index, len(rest_slots) - 1)].get_editor_property("material_interface")
-        pose_mesh.set_material(index, rest)  # edits the slot in place (the struct list is a copy)
-    EAL.save_loaded_asset(pose_mesh)
-    folder = pose_mesh.get_path_name().rsplit("/", 1)[0]
-    for path in EAL.list_assets(folder, recursive=True, include_folder=False):
-        asset = unreal.load_asset(path)
-        if isinstance(asset, (unreal.MaterialInterface, unreal.Texture)):
-            EAL.delete_asset(path)
-    used = [pose_mesh.get_material(i) for i in range(slot_count)]
-    print("POSE MESH uses", [m.get_path_name() if m else None for m in used])
+def import_poses():
+    """The re-posed meshes (poses.json) -> {model id: {"pose" / "model": (mesh, height cm)}}. They are
+    the same models, so they use the converted model's materials."""
+    import json
+    if not os.path.exists(POSES_JSON):
+        print("POSES missing - run blender_pose_models.py first (Four Arms flexes and T-pose models stay as they are)")
+        return {}
+    with open(POSES_JSON, encoding="utf-8") as handle:
+        listing = json.load(handle)
+    poses = {}
+    for pose in listing:
+        source = models.model_mesh_of(pose["source"])
+        if source is None:
+            print("POSE", pose["id"], "skipped:", pose["source"], "was not imported")
+            continue
+        mesh = models.import_model(pose)
+        models.share_materials(mesh, source)
+        poses.setdefault(pose["source"], {})[pose["use"]] = (mesh, pose.get("height_cm"))
+        print("POSE MESH", pose["id"], pose["use"], mesh.get_num_triangles(0), "triangles, height", pose.get("height_cm"))
+    return poses
 
 
 def main():
     habitats = {name: build_habitat(name, spec) for name, spec in HABITATS.items()}
     print(f"HABITATS {len(habitats)}")
 
-    pose_mesh = None
-    if os.path.exists(FLEX_GLB):
-        pose_mesh = models.import_model({"id": "FourArms_2_Flex", "glb": FLEX_GLB})
-        rest = unreal.load_asset(f"{MODEL_FOLDER}/DA_Model_FourArms_2").get_editor_property("model_mesh")
-        if rest:
-            share_rest_materials(pose_mesh, rest)
-        print("POSE MESH", pose_mesh.get_path_name(), pose_mesh.get_num_triangles(0), "triangles")
-    else:
-        print("POSE MESH missing - run blender_pose_fourarms.py first; Four Arms flexes without it")
+    poses = import_poses()
 
     ball_mesh = None
     if os.path.exists(BALL_GLB):
@@ -259,16 +264,13 @@ def main():
     for folder in (MODEL_FOLDER, CLASSIC_FOLDER):
         for path in EAL.list_assets(folder, recursive=False, include_folder=False):
             asset = unreal.load_asset(path)
-            if isinstance(asset, unreal.AlienDataAsset) and apply_moves(asset, habitats, pose_mesh, ball_mesh):
+            if isinstance(asset, unreal.AlienDataAsset) and apply_moves(asset, habitats, poses, ball_mesh):
                 aliens.append(asset)
 
-    # No model was downloaded for Heatblast: the classic shape-built one joins the museum. Stinkfly
-    # now has a downloaded model, which replaces the classic one.
+    # The museum shows the downloaded models only: the classic Stinkfly is replaced by the downloaded
+    # one, and the classic Heatblast (no model was downloaded for him) was taken out.
     collection = unreal.load_asset(COLLECTION)
-    members = [a for a in collection.get_editor_property("aliens") if a and a.get_name() != "DA_Classic_Stinkfly"]
-    heatblast = unreal.load_asset(f"{CLASSIC_FOLDER}/DA_Classic_Heatblast")
-    if heatblast and heatblast not in members:
-        members.append(heatblast)
+    members = [a for a in collection.get_editor_property("aliens") if a and a.get_name() not in LEFT_OUT]
     collection.set_editor_property("aliens", members)
     EAL.save_loaded_asset(collection)
     print(f"HABITATS AND MOVES DONE: {len(aliens)} aliens, collection has {len(members)}")

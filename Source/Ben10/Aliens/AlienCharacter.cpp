@@ -14,6 +14,9 @@
 #include "Components/StaticMeshComponent.h"
 #include "Engine/CollisionProfile.h"
 #include "Engine/StaticMesh.h"
+#include "Camera/PlayerCameraManager.h"
+#include "Kismet/GameplayStatics.h"
+#include "Materials/MaterialInstanceDynamic.h"
 #include "UObject/ConstructorHelpers.h"
 
 namespace
@@ -131,12 +134,10 @@ void AAlienCharacter::InitializeAlien(UAlienDataAsset* InData, AAlienChamber* In
 	const float Radius = FMath::Clamp(CollisionRadius, 6.f, Appearance->IsModel() ? 30.f : 20.f);
 	const float HalfHeight = FMath::Max(Radius, ModelHeight * 0.5f);
 	GetCapsuleComponent()->SetCapsuleSize(Radius, HalfHeight);
-	Appearance->SetBaseLocation(FVector(0.f, 0.f, -HalfHeight));
-	GetMesh()->SetRelativeLocation(FVector(0.f, 0.f, -HalfHeight));
+	CapsuleHalfHeightLocal = HalfHeight;
 
 	// Contact shadow: a soft disc just above the floor, a bit wider than the feet area.
 	ContactShadowScale = FVector(ShadowRadius * 2.6f / 100.f, ShadowRadius * 2.6f / 100.f, 1.f);
-	ContactShadow->SetRelativeLocation(FVector(0.f, 0.f, -HalfHeight + 0.3f));
 	ContactShadow->SetRelativeScale3D(ContactShadowScale);
 	if (UMaterialInterface* ShadowMaterial = MuseumAssets::BlobShadowMaterial())
 	{
@@ -166,6 +167,22 @@ void AAlienCharacter::ApplyScaleDependentSettings()
 	Move->RotationRate = FRotator(0.f, FMath::Min(300.f * SpeedMultiplier, 1080.f), 0.f);
 	Move->MaxStepHeight = 3.f * Scale;
 	Move->JumpZVelocity = 160.f * FMath::Sqrt(Scale);
+	PlaceBodyOnFloor();
+}
+
+void AAlienCharacter::PlaceBodyOnFloor()
+{
+	// The movement component keeps the capsule about 2 cm above the floor (world cm, whatever the
+	// scale); the feet and the shadow go down by that much so the alien really stands on the ground.
+	const float FloorGap = 0.5f * (UCharacterMovementComponent::MIN_FLOOR_DIST + UCharacterMovementComponent::MAX_FLOOR_DIST) / GetScaleFactor();
+	const float Bottom = -CapsuleHalfHeightLocal - FloorGap;
+	Appearance->SetBaseLocation(FVector(0.f, 0.f, Bottom));
+	GetMesh()->SetRelativeLocation(FVector(0.f, 0.f, Bottom));
+	ContactShadow->SetRelativeLocation(FVector(0.f, 0.f, Bottom + 0.3f));
+	if (TargetRing)
+	{
+		TargetRing->SetRelativeLocation(FVector(0.f, 0.f, Bottom + 0.5f));
+	}
 }
 
 void AAlienCharacter::SetSpeedMultiplier(float Multiplier)
@@ -190,7 +207,7 @@ void AAlienCharacter::SetContactShadowScale(float Factor)
 
 void AAlienCharacter::MoveToPoint(const FVector& WorldTarget, float SpeedScale)
 {
-	if (bIsHeld)
+	if (IsHeld())
 	{
 		return;
 	}
@@ -235,7 +252,7 @@ void AAlienCharacter::ClearLookTarget()
 void AAlienCharacter::Hop()
 {
 	UCharacterMovementComponent* Move = GetCharacterMovement();
-	if (!bIsHeld && Move->IsMovingOnGround())
+	if (!IsHeld() && Move->IsMovingOnGround())
 	{
 		LaunchCharacter(FVector(0.f, 0.f, Move->JumpZVelocity), false, true);
 	}
@@ -243,9 +260,9 @@ void AAlienCharacter::Hop()
 
 void AAlienCharacter::SetHeld(bool bHeld)
 {
-	if (bIsHeld == bHeld)
+	if (bIsHeld == bHeld || IsOutOfCase())
 	{
-		return;
+		return; // out of its case (in the player's hand or flying home): the case moves without it
 	}
 	bIsHeld = bHeld;
 	UCharacterMovementComponent* Move = GetCharacterMovement();
@@ -279,6 +296,25 @@ void AAlienCharacter::Tick(float DeltaSeconds)
 {
 	Super::Tick(DeltaSeconds);
 
+	if (bExamined)
+	{
+		UpdateExamine(DeltaSeconds);
+	}
+	else if (bReturning)
+	{
+		UpdateReturn(DeltaSeconds);
+	}
+	if (TargetRing && TargetRing->IsVisible())
+	{
+		TargetTime += DeltaSeconds;
+		const float Pulse = 0.5f + 0.5f * FMath::Sin(TargetTime * 6.f);
+		if (TargetRingMaterial)
+		{
+			TargetRingMaterial->SetScalarParameterValue(MuseumAssets::Params::Opacity, 0.45f + 0.4f * Pulse);
+		}
+		TargetRing->SetRelativeScale3D(ContactShadowScale * 1.25f * (1.f + 0.06f * Pulse));
+	}
+
 	UpdateMovement(DeltaSeconds);
 	UpdateTurning(DeltaSeconds);
 	UpdateContainment(DeltaSeconds);
@@ -299,7 +335,7 @@ void AAlienCharacter::Tick(float DeltaSeconds)
 
 void AAlienCharacter::UpdateMovement(float DeltaSeconds)
 {
-	if (!bHasMoveTarget || bIsHeld)
+	if (!bHasMoveTarget || IsHeld())
 	{
 		return;
 	}
@@ -329,7 +365,7 @@ void AAlienCharacter::UpdateMovement(float DeltaSeconds)
 
 void AAlienCharacter::UpdateTurning(float DeltaSeconds)
 {
-	if (!bHasDesiredYaw || bHasMoveTarget || bIsHeld)
+	if (!bHasDesiredYaw || bHasMoveTarget || IsHeld())
 	{
 		return;
 	}
@@ -353,7 +389,7 @@ void AAlienCharacter::UpdateContainment(float DeltaSeconds)
 	ContainmentTimer = 0.f;
 
 	AAlienChamber* Chamber = HomeChamber.Get();
-	if (!Chamber || bIsHeld || Chamber->IsBeingGrabbed())
+	if (!Chamber || IsHeld() || Chamber->IsBeingGrabbed())
 	{
 		return;
 	}
@@ -371,5 +407,205 @@ void AAlienCharacter::UpdateContainment(float DeltaSeconds)
 		StopMoving();
 		GetCharacterMovement()->StopMovementImmediately();
 		TeleportTo(Chamber->GetAlienSpawnLocation(GetCapsuleComponent()->GetScaledCapsuleHalfHeight()), FRotator(0.f, GetActorRotation().Yaw, 0.f));
+	}
+}
+
+// ---------------------------------------------------------------------------------------------
+// Taken out of the case by the player
+// ---------------------------------------------------------------------------------------------
+
+float AAlienCharacter::GetCaseScale() const
+{
+	const AAlienChamber* Chamber = HomeChamber.Get();
+	return Chamber ? Chamber->GetChamberScale() : GetScaleFactor();
+}
+
+void AAlienCharacter::BeginExamine()
+{
+	if (bExamined)
+	{
+		return;
+	}
+	if (bIsHeld)
+	{
+		SetHeld(false);
+	}
+	Actions->StopAction();
+	StopMoving();
+	bReturning = false;
+	bExamined = true;
+	bCelebrateOnLanding = false;
+	UCharacterMovementComponent* Move = GetCharacterMovement();
+	Move->StopMovementImmediately();
+	Move->DisableMovement();
+	GetCapsuleComponent()->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	ContactShadow->SetVisibility(false);
+	SetTargeted(false);
+	SetExcited(true);
+	ExamineLocation = GetActorLocation();
+	ExamineRotation = GetActorQuat();
+	ExamineZoom = 1.f;
+	if (AAlienAIController* Brain = Cast<AAlienAIController>(GetController()))
+	{
+		Brain->NotifyHeld(true);
+	}
+}
+
+void AAlienCharacter::SetExamineTarget(const FVector& Location, const FQuat& Rotation, float Zoom)
+{
+	ExamineLocation = Location;
+	ExamineRotation = Rotation;
+	ExamineZoom = FMath::Clamp(Zoom, 0.25f, 5.f);
+}
+
+void AAlienCharacter::UpdateExamine(float DeltaSeconds)
+{
+	// Follow the hand smoothly (a ray pick-up flies to the hand this way).
+	const float Alpha = 1.f - FMath::Exp(-16.f * DeltaSeconds);
+	SetActorLocationAndRotation(FMath::Lerp(GetActorLocation(), ExamineLocation, Alpha),
+		FQuat::Slerp(GetActorQuat(), ExamineRotation, Alpha), false, nullptr, ETeleportType::TeleportPhysics);
+	SetActorScale3D(FVector(FMath::Lerp(GetScaleFactor(), GetCaseScale() * ExamineZoom, Alpha)));
+	// It looks back at the person holding it.
+	if (APlayerCameraManager* Camera = UGameplayStatics::GetPlayerCameraManager(this, 0))
+	{
+		SetLookTarget(Camera->GetCameraLocation());
+	}
+}
+
+void AAlienCharacter::EndExamine()
+{
+	if (!bExamined)
+	{
+		return;
+	}
+	AAlienChamber* Chamber = HomeChamber.Get();
+	const FVector Location = GetActorLocation();
+	// Over its case (or reaching into it): straight back in. Anywhere else it floats home.
+	if (!Chamber || Chamber->IsInsideMovementBounds(Location, -15.f * Chamber->GetChamberScale()))
+	{
+		SettleInCase(Location);
+		return;
+	}
+	bExamined = false;
+	bReturning = true;
+	ReturnFrom = GetActorTransform();
+	ReturnTime = 0.f;
+	ReturnDuration = FMath::Clamp(static_cast<float>(FVector::Dist(Location, GetReturnPoint())) / 120.f, 0.6f, 1.6f);
+}
+
+FVector AAlienCharacter::GetReturnPoint() const
+{
+	const AAlienChamber* Chamber = HomeChamber.Get();
+	if (!Chamber)
+	{
+		return GetActorLocation();
+	}
+	const float Scale = Chamber->GetChamberScale();
+	return Chamber->GetAlienSpawnLocation(CapsuleHalfHeightLocal * Scale) + FVector(0.f, 0.f, Chamber->GlassHeight * Scale * 0.2f);
+}
+
+void AAlienCharacter::UpdateReturn(float DeltaSeconds)
+{
+	if (!HomeChamber.IsValid())
+	{
+		SettleInCase(GetActorLocation());
+		return;
+	}
+	ReturnTime += DeltaSeconds;
+	const float T = FMath::Clamp(ReturnTime / ReturnDuration, 0.f, 1.f);
+	const float Ease = FMath::InterpEaseInOut(0.f, 1.f, T, 2.f);
+	const FVector From = ReturnFrom.GetLocation();
+	const FVector To = GetReturnPoint(); // the case may be moving
+	const float Arc = FMath::Clamp(static_cast<float>(FVector::Dist(From, To)) * 0.25f, 10.f, 40.f);
+	const FQuat Upright = FRotator(0.f, ReturnFrom.Rotator().Yaw, 0.f).Quaternion();
+	SetActorLocationAndRotation(FMath::Lerp(From, To, Ease) + FVector(0.f, 0.f, FMath::Sin(T * PI) * Arc),
+		FQuat::Slerp(ReturnFrom.GetRotation(), Upright, Ease), false, nullptr, ETeleportType::TeleportPhysics);
+	SetActorScale3D(FVector(FMath::Lerp(static_cast<float>(ReturnFrom.GetScale3D().Z), GetCaseScale(), Ease)));
+	if (T >= 1.f)
+	{
+		SettleInCase(To);
+	}
+}
+
+void AAlienCharacter::SettleInCase(const FVector& WorldLocation)
+{
+	bExamined = false;
+	bReturning = false;
+	AAlienChamber* Chamber = HomeChamber.Get();
+	SetActorScale3D(FVector(GetCaseScale()));
+	FVector Drop = WorldLocation;
+	if (Chamber)
+	{
+		// Inside the glass, between the floor and the lid; it falls to the floor from there.
+		const float Scale = Chamber->GetChamberScale();
+		const float Radius = GetCapsuleComponent()->GetScaledCapsuleRadius();
+		const float HalfHeight = GetCapsuleComponent()->GetScaledCapsuleHalfHeight();
+		const FVector Inside = Chamber->ClampToMovementBounds(WorldLocation, Radius + 1.f * Scale);
+		Drop.X = Inside.X;
+		Drop.Y = Inside.Y;
+		const float Floor = Chamber->GetFloorZ() + HalfHeight + 1.f * Scale;
+		const float Lid = static_cast<float>(Chamber->GetActorTransform().TransformPosition(FVector(0.f, 0.f, Chamber->BaseHeight + Chamber->GlassHeight)).Z) - HalfHeight - 2.f * Scale;
+		Drop.Z = FMath::Clamp(WorldLocation.Z, static_cast<double>(Floor), static_cast<double>(FMath::Max(Floor, Lid)));
+	}
+	SetActorLocationAndRotation(Drop, FRotator(0.f, GetActorRotation().Yaw, 0.f), false, nullptr, ETeleportType::TeleportPhysics);
+	GetCapsuleComponent()->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+	UCharacterMovementComponent* Move = GetCharacterMovement();
+	Move->SetMovementMode(MOVE_Falling);
+	Move->Velocity = FVector::ZeroVector;
+	ApplyScaleDependentSettings();
+	ContactShadow->SetVisibility(true);
+	SetExcited(false);
+	ClearLookTarget();
+	bCelebrateOnLanding = true; // a happy hop once it lands
+	if (AAlienAIController* Brain = Cast<AAlienAIController>(GetController()))
+	{
+		Brain->NotifyHeld(false);
+	}
+	// The case is being carried right now: ride along like the rest of its contents.
+	if (Chamber && Chamber->IsBeingGrabbed())
+	{
+		SetHeld(true);
+	}
+}
+
+void AAlienCharacter::Landed(const FHitResult& Hit)
+{
+	Super::Landed(Hit);
+	if (bCelebrateOnLanding)
+	{
+		bCelebrateOnLanding = false;
+		Hop();
+	}
+}
+
+void AAlienCharacter::SetTargeted(bool bInTargeted)
+{
+	if (bTargeted == bInTargeted)
+	{
+		return;
+	}
+	bTargeted = bInTargeted;
+	if (bTargeted && !TargetRing)
+	{
+		TargetRing = NewObject<UStaticMeshComponent>(this, TEXT("PickUpRing"));
+		TargetRing->SetStaticMesh(MuseumAssets::PlaneMesh());
+		TargetRing->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+		TargetRing->SetCastShadow(false);
+		TargetRing->SetCanEverAffectNavigation(false);
+		TargetRing->SetupAttachment(GetCapsuleComponent());
+		if (UMaterialInterface* Ring = MuseumAssets::FXRingMaterial())
+		{
+			TargetRingMaterial = UMaterialInstanceDynamic::Create(Ring, this);
+			TargetRingMaterial->SetVectorParameterValue(MuseumAssets::Params::Color, FLinearColor(1.f, 0.85f, 0.3f));
+			TargetRingMaterial->SetScalarParameterValue(MuseumAssets::Params::Intensity, 2.2f);
+			TargetRing->SetMaterial(0, TargetRingMaterial);
+		}
+		TargetRing->RegisterComponent();
+		PlaceBodyOnFloor();
+	}
+	if (TargetRing)
+	{
+		TargetRing->SetVisibility(bTargeted);
+		TargetTime = 0.f;
 	}
 }

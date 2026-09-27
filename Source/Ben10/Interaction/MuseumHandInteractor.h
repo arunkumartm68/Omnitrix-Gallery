@@ -1,7 +1,8 @@
 // Alien Museum - one hand of the player: pose, buttons/pinch and the pointer ray.
 //
 // Works with three input sources and picks the best one every frame:
-//   Hand       - Quest hand tracking (pinch = select, pinch point = grab point)
+//   Hand       - Quest hand tracking (pinch = select, closed fist = grab; the grab point is the
+//                pinch point, or the palm while the fist is closed)
 //   Controller - Touch controllers (trigger = select, grip = grab)
 //   Desktop    - mouse ray from the camera when no headset is active (PIE testing)
 
@@ -75,6 +76,8 @@ public:
 	FVector GetAimOrigin() const { return AimOrigin; }
 	FVector GetAimDirection() const { return AimDirection; }
 	FVector GetGrabLocation() const { return GrabLocation; }
+	/** Orientation of the holding hand (grip controller, palm or camera), for turning held things. */
+	FQuat GetGrabRotation() const { return GrabRotation; }
 	/** Yaw used to carry objects (direction the hand points, flattened). */
 	float GetCarryYaw() const { return AimDirection.Rotation().Yaw; }
 	bool IsSelectPressed() const { return bSelectPressed; }
@@ -90,7 +93,7 @@ public:
 	DECLARE_MULTICAST_DELEGATE_TwoParams(FOnHandButton, UMuseumHandInteractor* /*Hand*/, bool /*bPressed*/);
 	/** Trigger (controller), pinch (hand) or left mouse (desktop). */
 	FOnHandButton OnSelect;
-	/** Grip (controller) or right mouse (desktop). Hands use pinch through OnSelect. */
+	/** Grip (controller), closed fist (hand tracking) or right mouse (desktop). */
 	FOnHandButton OnGrab;
 
 	// ---- Settings ----
@@ -104,6 +107,14 @@ public:
 	/** Thumb-index distance (cm) that ends a pinch (hysteresis against flicker). */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Museum|Hand")
 	float PinchEndDistance = 3.5f;
+
+	/** Average palm-to-fingertip distance (middle, ring, little; cm) that closes a fist = grab. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Museum|Hand")
+	float FistStartDistance = 5.5f;
+
+	/** ... and that opens it again (hysteresis). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Museum|Hand")
+	float FistEndDistance = 7.5f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Museum|Hand")
 	FLinearColor LaserColor = FLinearColor(0.3f, 0.8f, 1.0f);
@@ -139,6 +150,7 @@ private:
 	FVector AimOrigin = FVector::ZeroVector;
 	FVector AimDirection = FVector::ForwardVector;
 	FVector GrabLocation = FVector::ZeroVector;
+	FQuat GrabRotation = FQuat::Identity;
 	FMuseumPointerHit PointerHit;
 
 	bool bSelectPressed = false;
@@ -146,6 +158,7 @@ private:
 	bool bControllerSelect = false;
 	bool bControllerGrab = false;
 	bool bPinching = false;
+	bool bFist = false;
 
 	bool bHasDesktopRay = false;
 	FVector DesktopOrigin = FVector::ZeroVector;

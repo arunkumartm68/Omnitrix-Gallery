@@ -156,6 +156,55 @@ struct BEN10_API FAlienBodyPart
 	FVector PivotOffset = FVector::ZeroVector;
 };
 
+/**
+ * A piece of an imported model that moves on its own (e.g. a wing split off the body in Blender). It
+ * was exported in the same frame as ModelMesh, so it sits exactly where it belongs; it swings around
+ * its hinge - slowly at rest, fast while the alien flies.
+ */
+USTRUCT(BlueprintType)
+struct BEN10_API FAlienModelPart
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Part")
+	TSoftObjectPtr<UStaticMesh> Mesh;
+
+	/** Joint it swings around, in the model mesh's own space (cm, as imported). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Part")
+	FVector Hinge = FVector::ZeroVector;
+
+	/** Swing axis in the model mesh's own space (flapping wings: forward; the other wing: backward). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Part")
+	FVector Axis = FVector::ForwardVector;
+
+	/**
+	 * At rest it swings Amount degrees either side of Offset, Speed times a second. Wings that meet
+	 * over the back beat on one side only: Offset = Amount keeps them between 0 and twice the amount.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Part")
+	float Amount = 15.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Part")
+	float Offset = 0.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Part")
+	float Speed = 6.f;
+
+	/** The same while flying (the Fly move lifts the body), moving or held; blends from the rest values. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Part")
+	float FlyingAmount = 32.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Part")
+	float FlyingOffset = 0.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Part")
+	float FlyingSpeed = 12.f;
+
+	/** 0..1 offset into the cycle. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Part")
+	float Phase = 0.f;
+};
+
 UCLASS(BlueprintType)
 class BEN10_API UAlienDataAsset : public UPrimaryDataAsset
 {
@@ -202,6 +251,10 @@ public:
 	/** Where the model came from (download / author), shown on the chamber's info panel. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Model")
 	FText ModelCredit;
+
+	/** Pieces of the model that move on their own (Stinkfly's wings). */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Model")
+	TArray<FAlienModelPart> ModelParts;
 
 	bool HasModel() const { return !ModelMesh.IsNull(); }
 

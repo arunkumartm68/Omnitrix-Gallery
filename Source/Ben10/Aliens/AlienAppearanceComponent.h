@@ -180,6 +180,22 @@ private:
 
 	TArray<FAnimatedPart> AnimatedParts;
 
+	/** A model part that swings around its hinge (wings). */
+	struct FModelPartMotion
+	{
+		TWeakObjectPtr<USceneComponent> Pivot;
+		FVector Axis = FVector::ForwardVector; // body pivot space
+		float Amount = 15.f;
+		float Offset = 0.f;
+		float Speed = 6.f;
+		float FlyingAmount = 32.f;
+		float FlyingOffset = 0.f;
+		float FlyingSpeed = 12.f;
+		float Phase = 0.f;
+		float Cycle = 0.f;                     // own clock, so speed changes never jump
+	};
+	TArray<FModelPartMotion> ModelPartMotions;
+
 	float ModelHeight = 32.f;
 	float ModelRadius = 10.f;
 	float CollisionRadius = 8.f;
@@ -219,6 +235,7 @@ private:
 	TArray<float> AntennaBaseRoll;
 
 	float AnimTime = 0.f;
+	float BreathTime = 0.f;
 	float MaterializeTime = -1.f;
 	float MaterializeDuration = 0.6f;
 	float BlinkTimer = 2.f;

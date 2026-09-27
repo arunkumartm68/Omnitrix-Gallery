@@ -29,6 +29,8 @@ namespace
 	constexpr float HandleGap = 8.f;    // resize handles float this far outside the frame
 	constexpr float MoveInset = 3.f;    // walkable floor stops this far inside the glass
 	constexpr float HandleLingerTime = 0.6f;
+	constexpr float RemoveConfirmTime = 3.f;
+	const FLinearColor RemoveColor(1.f, 0.18f, 0.12f);
 
 	FVector ShapeScale(float SizeX, float SizeY, float SizeZ)
 	{
@@ -213,6 +215,19 @@ AAlienChamber::AAlienChamber()
 		ResizeHandles.Add(Handle);
 	}
 
+	// Remove button: a red knob with an X on the top corner, shown with the handles.
+	RemoveHit = CreateDefaultSubobject<USphereComponent>(TEXT("RemoveButton"));
+	RemoveHit->SetupAttachment(Root);
+	RemoveHit->InitSphereRadius(7.f);
+	MakePointerTarget(RemoveHit);
+	RemoveHit->SetCollisionEnabled(ECollisionEnabled::NoCollision); // enabled while shown
+	RemoveKnob = MakeMesh(TEXT("RemoveKnob"), SphereFinder.Object, RemoveHit);
+	RemoveKnob->SetRelativeScale3D(FVector(0.055f));
+	RemoveKnob->SetTranslucentSortPriority(4);
+	RemoveKnob->SetVisibility(false);
+	RemoveFace = CreateDefaultSubobject<USceneComponent>(TEXT("RemoveFace"));
+	RemoveFace->SetupAttachment(RemoveHit);
+
 	InteriorLight = CreateDefaultSubobject<UPointLightComponent>(TEXT("InteriorLight"));
 	InteriorLight->SetupAttachment(Root);
 	InteriorLight->SetMobility(EComponentMobility::Movable);
@@ -250,6 +265,16 @@ AAlienChamber::AAlienChamber()
 	SizeLabel = MakeText(TEXT("SizeLabel"), Root, 3.0f, FColor(190, 250, 255));
 	SizeLabel->SetVerticalAlignment(EVRTA_TextBottom);
 	SizeLabel->SetVisibility(false);
+
+	RemoveMark = MakeText(TEXT("RemoveMark"), RemoveFace, 4.2f, FColor::White);
+	RemoveMark->SetText(FText::FromString(TEXT("X")));
+	RemoveMark->SetRelativeLocation(FVector(3.9f, 0.f, 0.f)); // just in front of the knob, even when it grows (3.5 cm)
+	RemoveMark->SetVisibility(false);
+	RemoveLabel = MakeText(TEXT("RemoveLabel"), RemoveFace, 2.6f, FColor(255, 120, 100));
+	RemoveLabel->SetText(FText::FromString(TEXT("REMOVE?\npress again")));
+	RemoveLabel->SetVerticalAlignment(EVRTA_TextBottom);
+	RemoveLabel->SetRelativeLocation(FVector(3.f, 0.f, 5.f));
+	RemoveLabel->SetVisibility(false);
 
 	DefaultAlienClass = AAlienCharacter::StaticClass();
 }
@@ -434,6 +459,38 @@ void AAlienChamber::LayoutResizeHandles(const FVector2f& Half, float TopZ)
 		Handle.ArrowOut->SetRelativeLocationAndRotation(Direction * 5.f, FRotationMatrix::MakeFromZ(Direction).Rotator());
 		Handle.ArrowIn->SetRelativeLocationAndRotation(-Direction * 5.f, FRotationMatrix::MakeFromZ(-Direction).Rotator());
 	}
+
+	// Remove button: on the same top edge as the height knob, towards the viewer's right corner
+	// (like a window's close button).
+	const FVector2f Right(HeightHandleDir.Y, -HeightHandleDir.X);
+	const FVector2f Edge(HeightHandleDir.X * (Half.X + FrameInset + 4.f), HeightHandleDir.Y * (Half.Y + FrameInset + 4.f));
+	const float Along = Shape == EChamberShape::Round ? Half.X * 0.55f
+		: FMath::Max(0.f, (FMath::Abs(HeightHandleDir.X) > 0.5f ? Half.Y : Half.X) - 7.f);
+	RemoveHit->SetRelativeLocation(FVector(Edge.X + Right.X * Along, Edge.Y + Right.Y * Along, TopZ + 10.f));
+}
+
+bool AAlienChamber::IsRemoveButton(const UPrimitiveComponent* Component) const
+{
+	return Component && Component == RemoveHit;
+}
+
+bool AAlienChamber::IsRemoveButtonNear(const FVector& WorldPoint, float MaxDistance) const
+{
+	return RemoveKnob->IsVisible() && FVector::Dist(RemoveHit->GetComponentLocation(), WorldPoint) <= MaxDistance;
+}
+
+bool AAlienChamber::PressRemoveButton()
+{
+	if (RemoveArmedTime > 0.f)
+	{
+		RemoveArmedTime = 0.f;
+		return true;
+	}
+	RemoveArmedTime = RemoveConfirmTime;
+	RemoveLabel->SetVisibility(true);
+	FaceViewer(RemoveFace, 0.f, true);
+	UpdateHandleVisuals();
+	return false;
 }
 
 void AAlienChamber::ApplyMaterials()
@@ -451,6 +508,13 @@ void AAlienChamber::ApplyMaterials()
 	HoverMID = EmissiveBase ? UMaterialInstanceDynamic::Create(EmissiveBase, this) : nullptr;
 	HandleMID = EmissiveBase ? UMaterialInstanceDynamic::Create(EmissiveBase, this) : nullptr;
 	HandleHotMID = EmissiveBase ? UMaterialInstanceDynamic::Create(EmissiveBase, this) : nullptr;
+	RemoveMID = EmissiveBase ? UMaterialInstanceDynamic::Create(EmissiveBase, this) : nullptr;
+	if (RemoveMID)
+	{
+		RemoveMID->SetVectorParameterValue(MuseumAssets::Params::Color, RemoveColor);
+		RemoveMID->SetScalarParameterValue(MuseumAssets::Params::Intensity, 1.8f);
+		RemoveKnob->SetMaterial(0, RemoveMID);
+	}
 	if (HoverMID)
 	{
 		HoverGlow->SetMaterial(0, HoverMID);
@@ -1017,7 +1081,16 @@ void AAlienChamber::AimHeightHandle()
 void AAlienChamber::UpdateHandleVisuals()
 {
 	const bool bResizing = IsBeingResized();
-	const bool bShow = bResizing || ((HoverCount > 0 || HandleLinger > 0.f) && !bGrabbed);
+	const bool bShow = bResizing || ((HoverCount > 0 || HandleLinger > 0.f || RemoveArmedTime > 0.f) && !bGrabbed);
+
+	// Remove button: with the handles, but not while a handle is being dragged.
+	const bool bShowRemove = bShow && !bResizing;
+	const bool bRemoveHot = HotHandle.Get() == RemoveHit || RemoveArmedTime > 0.f;
+	RemoveHit->SetCollisionEnabled(bShowRemove ? ECollisionEnabled::QueryOnly : ECollisionEnabled::NoCollision);
+	RemoveKnob->SetVisibility(bShowRemove);
+	RemoveMark->SetVisibility(bShowRemove);
+	RemoveLabel->SetVisibility(bShowRemove && RemoveArmedTime > 0.f);
+	RemoveKnob->SetRelativeScale3D(FVector(bRemoveHot ? 0.07f : 0.055f));
 	for (FChamberResizeHandle& Handle : ResizeHandles)
 	{
 		if (!Handle.Hit)
@@ -1317,6 +1390,29 @@ void AAlienChamber::Tick(float DeltaSeconds)
 		}
 	}
 
+	// The remove button reads from anywhere; armed, it pulses until confirmed or it times out.
+	if (RemoveKnob->IsVisible())
+	{
+		FaceViewer(RemoveFace, DeltaSeconds, true);
+	}
+	if (RemoveArmedTime > 0.f)
+	{
+		RemoveArmedTime -= DeltaSeconds;
+		if (RemoveMID)
+		{
+			RemoveMID->SetScalarParameterValue(MuseumAssets::Params::Intensity, 2.f + 2.f * FMath::Abs(FMath::Sin(RemoveArmedTime * 2.f * PI * 1.5f)));
+		}
+		if (RemoveArmedTime <= 0.f)
+		{
+			RemoveArmedTime = 0.f;
+			if (RemoveMID)
+			{
+				RemoveMID->SetScalarParameterValue(MuseumAssets::Params::Intensity, 1.8f);
+			}
+			UpdateHandleVisuals();
+		}
+	}
+
 	// Size read-out follows the handle being dragged.
 	if (IsBeingResized())
 	{
@@ -1368,7 +1464,7 @@ void AAlienChamber::OnPointerHover(UPrimitiveComponent* HitComponent, bool bHove
 	{
 		AimHeightHandle();
 	}
-	if (GetResizeAxis(HitComponent) != EChamberResizeAxis::None)
+	if (GetResizeAxis(HitComponent) != EChamberResizeAxis::None || IsRemoveButton(HitComponent))
 	{
 		if (bHovered)
 		{

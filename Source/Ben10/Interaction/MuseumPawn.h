@@ -2,11 +2,16 @@
 //
 // Controls (Touch controllers / hand tracking / desktop PIE):
 //   Point + Trigger / Pinch / Left mouse   select UI, place chambers and aliens
-//   Trigger or Grip on a chamber           grab and carry it (works up close or by ray)
+//   Trigger, Grip or fist on a chamber     grab and carry it (works up close or by ray)
+//   Grip / fist on an alien (up close or   take the alien out and hold it like a pet: turn your hand
+//   by ray), or hold trigger / pinch on it to turn it, thumbstick / Z C spins it, Q E zooms, two hands
+//                                          zoom; let go over its case = back in, elsewhere = it
+//                                          floats home by itself
 //   Quick trigger / pinch on a chamber     show or hide its info panel
+//   Red X on a chamber (Delete on desktop) remove the chamber (press twice to confirm)
 //   Both hands on one chamber              scale and rotate it
 //   Thumbstick while carrying / Z C Q E    rotate (X) and resize (Y)
-//   Y / B / Menu / Tab                     open or close the Alien Collection
+//   X / Y / B / Menu / Tab                 open or close the Alien Collection
 //   Left-hand pinch and hold (1 s)         open or close the Alien Collection (hand tracking)
 //   Desktop only: mouse look, WASD move
 
@@ -27,6 +32,7 @@ class UInputAction;
 class UMuseumHandInteractor;
 class UAlienDataAsset;
 class AAlienChamber;
+class AAlienCharacter;
 class AMuseumDirector;
 struct FInputActionValue;
 
@@ -93,6 +99,10 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Input")
 	TObjectPtr<UInputAction> MenuAction;
 
+	/** Desktop testing (Delete): remove the chamber under the pointer, press twice like its red X. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Input")
+	TObjectPtr<UInputAction> RemoveAction;
+
 	/** 2D: X rotates, Y resizes the carried chamber. */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Input")
 	TObjectPtr<UInputAction> AdjustAction;
@@ -131,6 +141,22 @@ public:
 	/** Relative size change per second when resizing with the thumbstick. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Museum")
 	float ScaleSpeed = 0.6f;
+
+	/** How close (cm) a hand must be to an alien to pick it up directly (reach into the case). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Museum")
+	float NearAlienDistance = 10.f;
+
+	/** Degrees per second when spinning a held alien with the thumbstick. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Museum")
+	float ExamineSpinSpeed = 150.f;
+
+	/** Relative size change per second when zooming a held alien with the thumbstick. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Museum")
+	float ExamineZoomSpeed = 1.2f;
+
+	/** Smallest and largest zoom of a held alien (1 = its size in the case). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Museum")
+	FVector2D ExamineZoomRange = FVector2D(0.5f, 2.5f);
 
 	/** Seconds of left-hand pinch (pointing at nothing) that toggles the collection. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Museum")
@@ -206,6 +232,25 @@ private:
 		bool bFromSelect = false;
 	};
 
+	/** A hand holding an alien taken out of its case. */
+	struct FHandAlien
+	{
+		TWeakObjectPtr<AAlienCharacter> Alien;
+		FVector LocalOffset = FVector::ZeroVector;   // alien centre in the hand's frame, at zoom 1
+		FQuat LocalRotation = FQuat::Identity;        // alien rotation in the hand's frame
+		float Zoom = 1.f;
+		float Spin = 0.f;                             // degrees around its own up axis (thumbstick)
+		bool bFromSelect = false;
+		bool bActive = false;
+	};
+
+	/** Trigger / pinch on an alien by ray: a quick click opens its case's info panel, holding picks it up. */
+	struct FAlienPress
+	{
+		TWeakObjectPtr<AAlienCharacter> Alien;
+		float StartTime = 0.f;
+	};
+
 	/** A hand dragging one of a chamber's resize handles. */
 	struct FHandResize
 	{
@@ -232,6 +277,7 @@ private:
 	void OnGrabRightStarted(const FInputActionValue& Value);
 	void OnGrabRightCompleted(const FInputActionValue& Value);
 	void OnMenu(const FInputActionValue& Value);
+	void OnRemove(const FInputActionValue& Value);
 	void OnAdjust(const FInputActionValue& Value);
 	void OnAdjustCompleted(const FInputActionValue& Value);
 	void OnLook(const FInputActionValue& Value);
@@ -240,6 +286,22 @@ private:
 	// Interactor events
 	void HandleSelect(UMuseumHandInteractor* Hand, bool bPressed);
 	void HandleGrab(UMuseumHandInteractor* Hand, bool bPressed);
+
+	/** The red X (or Delete): the first press arms it, the second removes the chamber. */
+	void PressRemove(AAlienChamber* Chamber);
+	AAlienChamber* FindRemoveButton(const UMuseumHandInteractor* Hand) const;
+
+	// Holding aliens
+	AAlienCharacter* FindAlienNear(const FVector& Location, float MaxDistance) const;
+	AAlienCharacter* FindAlienOnRay(const UMuseumHandInteractor* Hand, FVector* OutHitLocation = nullptr) const;
+	AAlienCharacter* FindAlienToGrab(const UMuseumHandInteractor* Hand, bool& bOutNear, FVector* OutHitLocation = nullptr) const;
+	bool BeginAlienGrab(UMuseumHandInteractor* Hand, AAlienCharacter* Alien, bool bFromSelect, bool bNear);
+	void EndAlienGrab(UMuseumHandInteractor* Hand);
+	void UpdateAlienPresses();
+	void UpdateAlienGrabs(float DeltaSeconds);
+	void UpdateAlienTargets();
+	FHandAlien& GetAlienGrab(const UMuseumHandInteractor* Hand);
+	FAlienPress& GetAlienPress(const UMuseumHandInteractor* Hand);
 
 	bool TryBeginGrab(UMuseumHandInteractor* Hand, bool bFromSelect);
 	void EndGrab(UMuseumHandInteractor* Hand);
@@ -282,6 +344,14 @@ private:
 	FHandGrab RightGrab;
 	FHandResize LeftResize;
 	FHandResize RightResize;
+	FHandAlien LeftAlien;
+	FHandAlien RightAlien;
+	FAlienPress LeftPress;
+	FAlienPress RightPress;
+	TWeakObjectPtr<AAlienCharacter> TargetedAlien[2];
+	bool bTwoHandAlien = false;
+	float TwoHandAlienStartDistance = 1.f;
+	float TwoHandAlienStartZoom = 1.f;
 
 	bool bTwoHand = false;
 	float TwoHandStartDistance = 1.f;

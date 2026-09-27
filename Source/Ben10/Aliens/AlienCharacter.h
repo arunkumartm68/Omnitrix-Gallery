@@ -16,6 +16,7 @@ class UAlienDataAsset;
 class UAlienAppearanceComponent;
 class UAlienActionComponent;
 class UStaticMeshComponent;
+class UMaterialInstanceDynamic;
 class AAlienChamber;
 
 UCLASS()
@@ -65,8 +66,29 @@ public:
 	/** While the chamber is carried the alien freezes and rides along. */
 	void SetHeld(bool bHeld);
 
+	/** Not walking freely in its case: carried with the case, held by the player or floating back. */
 	UFUNCTION(BlueprintPure, Category = "Alien")
-	bool IsHeld() const { return bIsHeld; }
+	bool IsHeld() const { return bIsHeld || bExamined || bReturning; }
+
+	// ---- Taken out of the case by the player, like holding a pet ----
+
+	/** Picked up: it stops walking and colliding, the AI pauses, and it goes wherever the hand holds it. */
+	void BeginExamine();
+
+	/** Where the hand holds it this frame (followed smoothly). Zoom scales it (1 = its size in the case). */
+	void SetExamineTarget(const FVector& Location, const FQuat& Rotation, float Zoom);
+
+	/** Let go: over its case it drops back in, anywhere else it floats home first. */
+	void EndExamine();
+
+	UFUNCTION(BlueprintPure, Category = "Alien")
+	bool IsExamined() const { return bExamined; }
+
+	/** Held by the player or floating back to its case. */
+	bool IsOutOfCase() const { return bExamined || bReturning; }
+
+	/** A pulsing ring at its feet while a pointer is on it ("you can pick me up"). */
+	void SetTargeted(bool bInTargeted);
 
 	/** Current size relative to the data asset (follows the chamber scale). */
 	float GetScaleFactor() const;
@@ -81,6 +103,7 @@ public:
 	void SetContactShadowScale(float Factor);
 
 	virtual void Tick(float DeltaSeconds) override;
+	virtual void Landed(const FHitResult& Hit) override;
 
 protected:
 	virtual void BeginPlay() override;
@@ -102,6 +125,19 @@ protected:
 
 private:
 	void ApplyScaleDependentSettings();
+
+	/** Puts the body's feet (and the contact shadow) on the floor under the capsule. */
+	void PlaceBodyOnFloor();
+
+	void UpdateExamine(float DeltaSeconds);
+	void UpdateReturn(float DeltaSeconds);
+
+	/** Back in the case at this spot (kept inside the glass); it falls to the floor from there. */
+	void SettleInCase(const FVector& WorldLocation);
+
+	/** Where a returning alien flies to: above the middle of its case. */
+	FVector GetReturnPoint() const;
+	float GetCaseScale() const;
 	void UpdateMovement(float DeltaSeconds);
 	void UpdateTurning(float DeltaSeconds);
 	void UpdateContainment(float DeltaSeconds);
@@ -124,6 +160,25 @@ private:
 
 	bool bExcited = false;
 	bool bIsHeld = false;
+	bool bExamined = false;
+	bool bReturning = false;
+	bool bTargeted = false;
+	bool bCelebrateOnLanding = false;
+	float CapsuleHalfHeightLocal = 16.f;
+	FVector ExamineLocation = FVector::ZeroVector;
+	FQuat ExamineRotation = FQuat::Identity;
+	float ExamineZoom = 1.f;
+	FTransform ReturnFrom = FTransform::Identity;
+	float ReturnTime = 0.f;
+	float ReturnDuration = 1.f;
+	float TargetTime = 0.f;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UStaticMeshComponent> TargetRing;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UMaterialInstanceDynamic> TargetRingMaterial;
+
 	bool bAppearanceBuilt = false;
 	float ContainmentTimer = 0.f;
 	float SpeedMultiplier = 1.f;

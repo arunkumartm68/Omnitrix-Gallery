@@ -7,8 +7,10 @@ and the models belong to their Sketchfab authors. Keep this build private; do no
 Input: SourceArt/Converted/*.glb + manifest.json, written by Scripts/blender_convert_models.py.
 For every model this script:
   1. imports the .glb into /Game/AlienMuseum/Models/<Id>/ (one static mesh + its materials/textures;
-     no Nanite, no collision - Quest cannot use Nanite and the alien uses its capsule),
-  2. creates / updates /Game/AlienMuseum/Data/Models/DA_Model_<Id> (identity, height, behaviour),
+     no Nanite, no collision - Quest cannot use Nanite and the alien uses its capsule), and its
+     moving parts (Stinkfly's wings) into /Game/AlienMuseum/Models/<Id>_<Part><Side>/,
+  2. creates / updates /Game/AlienMuseum/Data/Models/DA_Model_<Id> (identity, height, behaviour,
+     moving parts with their joints and how they swing),
   3. puts them all in DA_AlienCollection_Models and makes that the museum's collection.
 Re-running updates everything in place. Afterwards run create_habitats_and_moves.py (habitats,
 signature moves and speeds live there and are reset here).
@@ -59,6 +61,13 @@ EXTRA = {
 
 HOVERS = {"Ghostfreak", "Stinkfly"}
 
+# How a model's moving parts swing (AlienModelPart), by part name (blender_convert_models.py parts).
+# Stinkfly's wings beat outwards from where they meet over his back (never through each other): a
+# buzz while he hovers, big fast strokes when he flies, moves or is held.
+PART_MOTION = {
+    "Wing": dict(amount=15.0, offset=17.0, speed=6.0, flying_amount=32.0, flying_offset=34.0, flying_speed=12.0),
+}
+
 AT = unreal.AssetToolsHelpers.get_asset_tools()
 EAL = unreal.EditorAssetLibrary
 
@@ -75,6 +84,8 @@ def load_or_create(folder, asset_name, cls):
 def import_model(entry):
     """Imports one .glb as a single static mesh. Returns the StaticMesh."""
     dest = f"{MODEL_ROOT}/{entry['id']}"
+    # Headless runs have no Content Browser to show the new assets in (it would crash).
+    unreal.SystemLibrary.execute_console_command(None, "Interchange.FeatureFlags.Import.SyncToBrowser 0")
     # Start clean: a re-import over existing assets keeps the old materials, so textures added to
     # the model since the last import would never show up.
     if EAL.does_directory_exist(dest):
@@ -119,6 +130,56 @@ def import_model(entry):
     return max(meshes, key=lambda m: m.get_num_triangles(0))
 
 
+def model_mesh_of(model_id):
+    """The static mesh imported for a converted model (None if it was never imported)."""
+    folder = f"{MODEL_ROOT}/{model_id}"
+    if not EAL.does_directory_exist(folder):
+        return None
+    meshes = [a for a in (unreal.load_asset(p) for p in EAL.list_assets(folder, recursive=True, include_folder=False))
+              if isinstance(a, unreal.StaticMesh)]
+    return max(meshes, key=lambda m: m.get_num_triangles(0)) if meshes else None
+
+
+def share_materials(mesh, source_mesh):
+    """A mesh made from the same model (a pose, the other wing) uses the source mesh's materials;
+    the duplicates imported with it are deleted."""
+    source_slots = source_mesh.get_editor_property("static_materials")
+    slot_count = len(mesh.get_editor_property("static_materials"))
+    for index in range(slot_count):
+        material = source_slots[min(index, len(source_slots) - 1)].get_editor_property("material_interface")
+        mesh.set_material(index, material)  # edits the slot in place (the struct list is a copy)
+    EAL.save_loaded_asset(mesh)
+    folder = mesh.get_path_name().rsplit("/", 1)[0]
+    for path in EAL.list_assets(folder, recursive=True, include_folder=False):
+        asset = unreal.load_asset(path)
+        if isinstance(asset, (unreal.MaterialInterface, unreal.Texture)):
+            EAL.delete_asset(path)
+    used = [mesh.get_material(i) for i in range(slot_count)]
+    print(f"{mesh.get_name()} uses", [m.get_path_name() if m else None for m in used])
+
+
+def import_parts(entry):
+    """Imports a model's moving parts (one mesh per side, in the model's frame). Returns AlienModelParts."""
+    parts = []
+    first = None
+    for part in entry.get("parts", []):
+        mesh = import_model(part)
+        if first is None:
+            first = mesh
+        else:
+            share_materials(mesh, first)  # a mirrored pair: one set of materials
+        name = part["id"][len(entry["id"]) + 1:-1]  # Stinkfly_WingL -> Wing
+        model_part = unreal.AlienModelPart()
+        model_part.set_editor_property("mesh", mesh)
+        model_part.set_editor_property("hinge", unreal.Vector(*part["hinge"]))
+        model_part.set_editor_property("axis", unreal.Vector(*part["axis"]))
+        for key, value in PART_MOTION.get(name, {}).items():
+            model_part.set_editor_property(key, value)
+        parts.append(model_part)
+        print(f"PART {part['id']}: tris={mesh.get_num_triangles(0)} hinge={part['hinge']} axis={part['axis']}")
+    return parts
+
+
 def identity_for(alien):
     """(species, planet, description, chamber colour) from the classic asset or EXTRA."""
     if alien in CLASSIC_ASSETS:
@@ -131,7 +192,7 @@ def identity_for(alien):
             unreal.LinearColor(*extra["chamber"], 1.0))
 
 
-def build_alien(entry, mesh, display_name):
+def build_alien(entry, mesh, display_name, parts=()):
     da = load_or_create(DATA_FOLDER, f"DA_Model_{entry['id']}", unreal.AlienDataAsset)
     species, planet, desc, chamber = identity_for(entry["alien"])
     da.set_editor_property("alien_id", unreal.Name(f"Model_{entry['id']}"))
@@ -140,6 +201,7 @@ def build_alien(entry, mesh, display_name):
     da.set_editor_property("home_planet", planet)
     da.set_editor_property("description", desc)
     da.set_editor_property("model_mesh", mesh)
+    da.set_editor_property("model_parts", list(parts))
     da.set_editor_property("model_rotation", unreal.Rotator(0.0, 0.0, 0.0))
     da.set_editor_property("model_credit", unreal.Text(f"Model: {entry['source_folder']} (Sketchfab download)"))
     da.set_editor_property("height", float(entry["height_cm"]))
@@ -158,8 +220,6 @@ def build_alien(entry, mesh, display_name):
 
 def main(only=()):
     """Imports every model in ORDER, or only the named ids (the others keep their assets as they are)."""
-    # Headless runs have no Content Browser to show the new assets in (it would crash).
-    unreal.SystemLibrary.execute_console_command(None, "Interchange.FeatureFlags.Import.SyncToBrowser 0")
     with open(os.path.join(CONVERTED, "manifest.json"), encoding="utf-8") as handle:
         manifest = {m["id"]: m for m in json.load(handle)}
     missing = [i for i in ORDER if i not in manifest]
@@ -190,7 +250,7 @@ def main(only=()):
             assets.append(da)
             continue
         mesh = import_model(entry)
-        da = build_alien(entry, mesh, display)
+        da = build_alien(entry, mesh, display, import_parts(entry))
         assets.append(da)
         folder = f"{MODEL_ROOT}/{model_id}"
         textures = [p for p in EAL.list_assets(folder, recursive=True, include_folder=False)

@@ -220,6 +220,13 @@ void AMuseumDirector::PreloadAlienAssets()
 				Paths.AddUnique(Mesh->ToSoftObjectPath());
 			}
 		}
+		for (const FAlienModelPart& Part : Alien->ModelParts)
+		{
+			if (!Part.Mesh.IsNull())
+			{
+				Paths.AddUnique(Part.Mesh.ToSoftObjectPath()); // Stinkfly's wings
+			}
+		}
 	}
 	if (Paths.Num() == 0)
 	{

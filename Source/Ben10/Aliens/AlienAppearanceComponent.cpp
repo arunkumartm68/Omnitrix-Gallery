@@ -85,6 +85,7 @@ void UAlienAppearanceComponent::ClearAppearance()
 	EyeBaseScales.Reset();
 	AntennaBaseRoll.Reset();
 	AnimatedParts.Reset();
+	ModelPartMotions.Reset();
 	CustomMIDs.Reset();
 	SkinMID = AccentMID = DarkMID = EyeMID = GlowMID = nullptr;
 	BodyPivot = nullptr;
@@ -284,6 +285,31 @@ void UAlienAppearanceComponent::BuildModelBody(const UAlienDataAsset* Data, USta
 	ModelFix = Fix;
 	ModelOffset = Offset;
 	ModelScale = Scale;
+
+	// Pieces exported in the same frame as the model (wings): each hangs off a pivot at its hinge, so
+	// it lines up with the body and can swing.
+	for (const FAlienModelPart& Part : Data->ModelParts)
+	{
+		UStaticMesh* PartMesh = Part.Mesh.LoadSynchronous();
+		if (!PartMesh)
+		{
+			continue;
+		}
+		const FVector HingeLocation = Fix.RotateVector(Part.Hinge * Scale) + Offset;
+		USceneComponent* Hinge = AddPivot(TEXT("AlienModelHinge"), BodyPivot, FTransform(HingeLocation));
+		AddPart(TEXT("AlienModelPart"), PartMesh, Hinge, FTransform(Fix, Offset - HingeLocation, FVector(Scale)), nullptr);
+		FModelPartMotion Motion;
+		Motion.Pivot = Hinge;
+		Motion.Axis = Fix.RotateVector(Part.Axis).GetSafeNormal();
+		Motion.Amount = Part.Amount;
+		Motion.Offset = Part.Offset;
+		Motion.Speed = Part.Speed;
+		Motion.FlyingAmount = Part.FlyingAmount;
+		Motion.FlyingOffset = Part.FlyingOffset;
+		Motion.FlyingSpeed = Part.FlyingSpeed;
+		Motion.Phase = Part.Phase;
+		ModelPartMotions.Add(Motion);
+	}
 
 	const FVector Half = ModelBounds.GetExtent() * Scale;
 	ModelRadius = FMath::Max(Half.X, Half.Y);
@@ -651,23 +677,27 @@ void UAlienAppearanceComponent::UpdateAnimation(float DeltaSeconds, float SpeedA
 	AnimTime += DeltaSeconds * (0.8f + Energy) * (1.f + SpeedAlpha * 1.5f + Excite);
 
 	// A body has weight: lean into turns (yaw rate) and pitch when speeding up or slowing down.
-	float TargetRoll = 0.f;
-	float TargetPitch = 0.f;
+	float YawRate = 0.f;
 	if (const USceneComponent* Parent = GetAttachParent())
 	{
 		const float ParentYaw = static_cast<float>(Parent->GetComponentRotation().Yaw);
 		if (bHasLastYaw && DeltaSeconds > KINDA_SMALL_NUMBER)
 		{
-			const float YawRate = FRotator::NormalizeAxis(ParentYaw - LastParentYaw) / DeltaSeconds;
-			TargetRoll = FMath::Clamp(YawRate * 0.06f * SpeedAlpha, -10.f, 10.f);
-			TargetPitch = FMath::Clamp(-(SpeedAlpha - LastSpeedAlpha) / DeltaSeconds * 5.f, -8.f, 8.f);
+			YawRate = FRotator::NormalizeAxis(ParentYaw - LastParentYaw) / DeltaSeconds;
 		}
 		LastParentYaw = ParentYaw;
 		bHasLastYaw = true;
 	}
+	const float TargetRoll = FMath::Clamp(YawRate * 0.06f * SpeedAlpha, -10.f, 10.f);
+	const float TargetPitch = DeltaSeconds > KINDA_SMALL_NUMBER ? FMath::Clamp(-(SpeedAlpha - LastSpeedAlpha) / DeltaSeconds * 5.f, -8.f, 8.f) : 0.f;
 	LastSpeedAlpha = SpeedAlpha;
 	LeanRoll = FMath::FInterpTo(LeanRoll, TargetRoll, DeltaSeconds, 5.f);
 	LeanPitch = FMath::FInterpTo(LeanPitch, TargetPitch, DeltaSeconds, 3.f);
+
+	// Turning on the spot is stepping too.
+	const float TurnAlpha = FMath::Clamp(FMath::Abs(YawRate) / 150.f, 0.f, 1.f) * (1.f - SpeedAlpha);
+	const float StepAlpha = FMath::Max(SpeedAlpha, 0.6f * TurnAlpha);
+	BreathTime += DeltaSeconds;
 
 	// Body bob / squash & stretch.
 	const float Wave = FMath::Sin(AnimTime * 4.f);
@@ -678,10 +708,22 @@ void UAlienAppearanceComponent::UpdateAnimation(float DeltaSeconds, float SpeedA
 		BodyLift += Wave * ModelHeight * 0.03f * (1.f + Excite);
 		BodyPivot->SetRelativeLocation(FVector(0.f, 0.f, BodyLift));
 	}
+	else if (bIsModel)
+	{
+		// A rigid figure: it breathes slowly when still (about 15 breaths a minute), and each step
+		// lands with a little squash and pushes the body up again.
+		const float Step = AnimTime * 6.f;
+		const float Contact = (1.f - FMath::Abs(FMath::Sin(Step))) * StepAlpha;
+		const float Breath = FMath::Sin(BreathTime * 2.f * PI * 0.25f) * (1.f - StepAlpha);
+		Squash = 0.006f * Breath - 0.015f * Contact + 0.015f * Excite * Wave;
+		const float Wide = 1.f + 0.012f * Breath + 0.0075f * Contact;
+		BodyPivot->SetRelativeScale3D(FVector(Wide, Wide, 1.f + Squash));
+		BodyLift += ModelHeight * 0.015f * (StepAlpha - Contact);
+		BodyPivot->SetRelativeLocation(FVector(0.f, 0.f, BodyLift));
+	}
 	else
 	{
-		// Models are rigid figures: half the squash, and a waddle instead of swinging legs.
-		Squash = Wave * (0.025f + 0.04f * SpeedAlpha + 0.03f * Excite) * (bIsModel ? 0.5f : 1.f);
+		Squash = Wave * (0.025f + 0.04f * SpeedAlpha + 0.03f * Excite);
 		BodyPivot->SetRelativeScale3D(FVector(1.f - Squash * 0.5f, 1.f - Squash * 0.5f, 1.f + Squash));
 
 		if (FootL && FootR)
@@ -693,12 +735,35 @@ void UAlienAppearanceComponent::UpdateAnimation(float DeltaSeconds, float SpeedA
 		}
 	}
 
-	// Models are one rigid figure: they waddle, lean, and turn a little towards what they look at.
+	// Models are one rigid figure: they waddle, lean, shift their weight while standing, and turn a
+	// little towards what they look at.
 	if (bIsModel)
 	{
-		const float Waddle = bHovers ? 0.f : FMath::Sin(AnimTime * 6.f) * 4.f * SpeedAlpha;
+		const float Waddle = bHovers ? 0.f : FMath::Sin(AnimTime * 6.f) * 4.f * StepAlpha;
+		const float WeightShift = FMath::Sin(BreathTime * 2.f * PI * 0.12f) * 1.2f * (1.f - StepAlpha);
 		const float BodyYaw = HeadRotation.Yaw * 0.35f * (1.f - SpeedAlpha);
-		BodyPivot->SetRelativeRotation(FRotator(-3.f * SpeedAlpha + LeanPitch, BodyYaw, Waddle + LeanRoll));
+		BodyPivot->SetRelativeRotation(FRotator(-3.f * SpeedAlpha + LeanPitch, BodyYaw, Waddle + LeanRoll + WeightShift));
+	}
+
+	// Wings and other swinging model parts: a buzz at rest, big fast strokes while flying - and a
+	// hovering flyer beats harder when it moves or is held.
+	if (ModelPartMotions.Num() > 0)
+	{
+		float Flying = FMath::Clamp(ExtraLift / FMath::Max(1.f, 0.08f * ModelHeight), 0.f, 1.f);
+		if (bHovers)
+		{
+			Flying = FMath::Max3(Flying, 0.6f * SpeedAlpha, 0.7f * Excite);
+		}
+		for (FModelPartMotion& Part : ModelPartMotions)
+		{
+			if (USceneComponent* Pivot = Part.Pivot.Get())
+			{
+				Part.Cycle += DeltaSeconds * FMath::Lerp(Part.Speed, Part.FlyingSpeed, Flying);
+				const float Swing = FMath::Sin((Part.Cycle + Part.Phase) * 2.f * PI) * FMath::Lerp(Part.Amount, Part.FlyingAmount, Flying);
+				const float Angle = FMath::Lerp(Part.Offset, Part.FlyingOffset, Flying) + Swing;
+				Pivot->SetRelativeRotation(FQuat(Part.Axis, FMath::DegreesToRadians(Angle)));
+			}
+		}
 	}
 
 	// Head follows the top of the body.

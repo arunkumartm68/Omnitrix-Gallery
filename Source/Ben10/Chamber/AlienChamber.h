@@ -12,6 +12,7 @@
 //   ├── SpawnPoint
 //   ├── SelectBox (what the pointer ray hits)
 //   ├── Resize handles (top edge = height, sides = width, base front = depth; shown while pointed at)
+//   ├── Remove button (red X on the top corner, shown with the handles; press twice to remove)
 //   ├── HoverGlow (anti-gravity glow under the base while floating in the air)
 //   ├── InfoRoot (holographic info panel) + SizeLabel (shown while resizing)
 //   └── InteriorLight (optional real point light, off by default for Quest performance)
@@ -193,6 +194,24 @@ public:
 
 	UFUNCTION(BlueprintPure, Category = "Chamber|Size")
 	bool IsBeingResized() const { return ResizeAxis != EChamberResizeAxis::None; }
+
+	// ---------- Remove button ----------
+
+	/** True for the red X shown with the resize handles. */
+	bool IsRemoveButton(const UPrimitiveComponent* Component) const;
+
+	/** Hand tracking: the red X is showing and this point is right at it. */
+	bool IsRemoveButtonNear(const FVector& WorldPoint, float MaxDistance) const;
+
+	/**
+	 * The X was pressed: the first press arms it ("REMOVE?") for a few seconds, a second press confirms.
+	 * Returns true when confirmed - the caller then removes the chamber.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Chamber")
+	bool PressRemoveButton();
+
+	UFUNCTION(BlueprintPure, Category = "Chamber")
+	bool IsRemoveArmed() const { return RemoveArmedTime > 0.f; }
 
 	// ---------- Grabbing (driven by AMuseumPawn) ----------
 
@@ -415,6 +434,23 @@ protected:
 	UPROPERTY(VisibleAnywhere, Category = "Chamber")
 	TArray<FChamberResizeHandle> ResizeHandles;
 
+	/** Invisible sphere the pointer hits for the remove button (only while the handles are shown). */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Chamber")
+	TObjectPtr<USphereComponent> RemoveHit;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Chamber")
+	TObjectPtr<UStaticMeshComponent> RemoveKnob;
+
+	/** Turns to the viewer: the X on the knob and the "REMOVE?" question. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Chamber")
+	TObjectPtr<USceneComponent> RemoveFace;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Chamber")
+	TObjectPtr<UTextRenderComponent> RemoveMark;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Chamber")
+	TObjectPtr<UTextRenderComponent> RemoveLabel;
+
 private:
 	void BuildLayout();
 	void LayoutResizeHandles(const FVector2f& Half, float TopZ);
@@ -483,6 +519,9 @@ private:
 	UPROPERTY(Transient)
 	TObjectPtr<UMaterialInstanceDynamic> HandleHotMID;
 
+	UPROPERTY(Transient)
+	TObjectPtr<UMaterialInstanceDynamic> RemoveMID;
+
 	/** Basic shapes used to switch between the box and round look. */
 	UPROPERTY()
 	TObjectPtr<UStaticMesh> CubeMesh;
@@ -513,6 +552,9 @@ private:
 
 	/** Handles stay (and stay pointable) this long after the pointer leaves, so it can cross a gap onto a knob. */
 	float HandleLinger = 0.f;
+
+	/** > 0 while the remove button waits for its confirming second press. */
+	float RemoveArmedTime = 0.f;
 
 	/** Chamber-space direction of the top edge that carries the height handle. */
 	FVector2f HeightHandleDir = FVector2f(1.f, 0.f);

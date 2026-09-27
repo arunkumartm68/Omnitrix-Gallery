@@ -152,6 +152,9 @@ private:
 	void SpawnAfterImage(float Opacity, float Life);
 	void UpdateAfterImages(float Dt);
 
+	/** A little dust where the feet land (a ripple in water, sparks on lava). */
+	void UpdateFootsteps(float Dt);
+
 	void EnsureBall();
 	void EnsureClones();
 	void EnsureVines();
@@ -180,6 +183,9 @@ private:
 	float Height = 40.f;        // data height (cm at scale 1)
 	float WalkSpeed = 20.f;     // data walk speed (cm/s at scale 1)
 	bool bSpeedTrail = false;
+	bool bHovers = false;
+	float FootstepDistance = 0.f;
+	bool bLeftFoot = false;
 
 	// ---- current move ----
 	EAlienAction Current = EAlienAction::Roll;

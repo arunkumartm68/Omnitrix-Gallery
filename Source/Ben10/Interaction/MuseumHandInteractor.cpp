@@ -95,9 +95,11 @@ bool UMuseumHandInteractor::UpdateFromHandTracking()
 		return false;
 	}
 
-	const FVector ThumbTip = State.HandKeyLocations[static_cast<int32>(EHandKeypoint::ThumbTip)];
-	const FVector IndexTip = State.HandKeyLocations[static_cast<int32>(EHandKeypoint::IndexTip)];
-	const FVector IndexKnuckle = State.HandKeyLocations[static_cast<int32>(EHandKeypoint::IndexProximal)];
+	auto Key = [&State](EHandKeypoint Keypoint) { return State.HandKeyLocations[static_cast<int32>(Keypoint)]; };
+	const FVector ThumbTip = Key(EHandKeypoint::ThumbTip);
+	const FVector IndexTip = Key(EHandKeypoint::IndexTip);
+	const FVector IndexKnuckle = Key(EHandKeypoint::IndexProximal);
+	const FVector Palm = Key(EHandKeypoint::Palm);
 
 	// Pointer ray from an estimated shoulder through the index knuckle: stable and natural,
 	// similar to the system hand ray.
@@ -110,14 +112,24 @@ bool UMuseumHandInteractor::UpdateFromHandTracking()
 	}
 	AimOrigin = IndexKnuckle;
 	AimDirection = (IndexKnuckle - Shoulder).GetSafeNormal();
-	GrabLocation = (ThumbTip + IndexTip) * 0.5f;
+	if (State.HandKeyRotations.IsValidIndex(static_cast<int32>(EHandKeypoint::Palm)))
+	{
+		GrabRotation = State.HandKeyRotations[static_cast<int32>(EHandKeypoint::Palm)];
+	}
 
-	// Pinch with hysteresis.
+	// Closed fist = grab: the middle, ring and little fingertips curl in to the palm.
+	const float Curl = (FVector::Dist(Key(EHandKeypoint::MiddleTip), Palm) + FVector::Dist(Key(EHandKeypoint::RingTip), Palm)
+		+ FVector::Dist(Key(EHandKeypoint::LittleTip), Palm)) / 3.f;
+	bFist = bFist ? Curl < FistEndDistance : Curl < FistStartDistance;
+
+	// Pinch with hysteresis - not while making a fist (closing fingers brush thumb and index together).
 	const float PinchDistance = FVector::Dist(ThumbTip, IndexTip);
-	const bool bNowPinching = bPinching ? PinchDistance < PinchEndDistance : PinchDistance < PinchStartDistance;
-	bPinching = bNowPinching;
+	bPinching = !bFist && (bPinching ? PinchDistance < PinchEndDistance : PinchDistance < PinchStartDistance);
+
+	// Grab point: the palm inside a fist, else between thumb and index. Set before the events fire.
+	GrabLocation = bFist ? Palm : (ThumbTip + IndexTip) * 0.5f;
 	SetSelectState(bPinching);
-	SetGrabState(false);
+	SetGrabState(bFist);
 	return true;
 }
 
@@ -129,7 +141,9 @@ bool UMuseumHandInteractor::UpdateFromController()
 	}
 	AimOrigin = AimController->GetComponentLocation();
 	AimDirection = AimController->GetForwardVector();
-	GrabLocation = (GripController && GripController->IsTracked()) ? GripController->GetComponentLocation() : AimOrigin;
+	const bool bGripTracked = GripController && GripController->IsTracked();
+	GrabLocation = bGripTracked ? GripController->GetComponentLocation() : AimOrigin;
+	GrabRotation = bGripTracked ? GripController->GetComponentQuat() : AimController->GetComponentQuat();
 	SetSelectState(bControllerSelect);
 	SetGrabState(bControllerGrab);
 	return true;
@@ -145,6 +159,7 @@ void UMuseumHandInteractor::TickComponent(float DeltaTime, ELevelTick TickType, 
 		AimOrigin = DesktopOrigin;
 		AimDirection = DesktopDirection;
 		GrabLocation = DesktopOrigin + DesktopDirection * 40.f;
+		GrabRotation = FRotationMatrix::MakeFromX(DesktopDirection).ToQuat();
 		SetSelectState(bControllerSelect);
 		SetGrabState(bControllerGrab);
 		NewSource = EMuseumHandSource::Desktop;
@@ -161,6 +176,7 @@ void UMuseumHandInteractor::TickComponent(float DeltaTime, ELevelTick TickType, 
 	if (NewSource != EMuseumHandSource::Hand)
 	{
 		bPinching = false;
+		bFist = false;
 	}
 	Source = NewSource;
 

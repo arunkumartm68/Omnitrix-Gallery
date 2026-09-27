@@ -51,8 +51,8 @@ run) → Alien Collection panel appears in front of the player.
 | Interaction | `Source/Ben10/Interaction/` – `MuseumPawn`, `MuseumHandInteractor` |
 | UI | `Source/Ben10/UI/AlienCollectionPanel` |
 | Content | `Content/AlienMuseum/` – `Maps/L_AlienMuseum`, `Blueprints/BP_*`, `Data/DA_*`, `Data/Classic/DA_Classic_*`, `Data/Models/DA_Model_*`, `Data/Habitats/HAB_*`, `Models/<Id>/` (imported meshes, materials, textures), `Materials/M_*` |
-| Tools | `Scripts/create_classic_aliens.py` – shape-built classic aliens; `Scripts/blender_inspect_models.py`, `Scripts/blender_convert_models.py`, `Scripts/blender_models_common.py` – downloaded models → Unreal-ready `.glb`; `Scripts/blender_pose_fourarms.py` – Four Arms' flex pose; `Scripts/import_downloaded_models.py` – `.glb` → meshes + `DA_Model_*` + collection; `Scripts/create_habitats_and_moves.py` – habitats, signature moves, pose / ball meshes; `Scripts/create_museum_materials.py` – glass, habitat and effect materials |
-| Source art | `SourceArt/` (not in git): `Downloaded/` (unzipped downloads), `Converted/` (`.glb`, previews, `manifest.json`) |
+| Tools | `Scripts/create_classic_aliens.py` – shape-built classic aliens; `Scripts/blender_inspect_models.py`, `Scripts/blender_convert_models.py`, `Scripts/blender_models_common.py` – downloaded models → Unreal-ready `.glb`; `Scripts/blender_pose_models.py` – re-poses rig-less models (Four Arms' flex, relaxed Four Arms and Wildvine); `Scripts/import_downloaded_models.py` – `.glb` → meshes + `DA_Model_*` + collection; `Scripts/create_habitats_and_moves.py` – habitats, signature moves, pose / ball meshes; `Scripts/create_museum_materials.py` – glass, habitat and effect materials |
+| Source art | `SourceArt/` (not in git): `Downloaded/` (unzipped downloads), `Converted/` (`.glb`, previews, `manifest.json`, `poses.json`) |
 
 ## Build
 
@@ -76,6 +76,9 @@ level's editor-only furniture (tag `MuseumEditorRoom`) stands in for your room.
 | Z / C | rotate carried chamber |
 | Q / E | shrink / grow carried chamber; while placing a new chamber in the air: closer / farther |
 | Left mouse on a resize handle | drag to change the case's height / width / depth (look to move it) |
+| Right mouse on an alien (gold ring at its feet) | take it out of its case and hold it; Z / C spin it, Q / E zoom out / in; let go over its case = back in, anywhere else = it floats home |
+| Hold left mouse on an alien | the same (a quick click shows its case's info panel) |
+| Left mouse on a case's red X, twice / Delete twice | remove the chamber (the first press asks "REMOVE?") |
 | Tab | open / close the Alien Collection |
 
 ## Deploy to Quest 3S
@@ -95,9 +98,24 @@ level's editor-only furniture (tag `MuseumEditorRoom`) stands in for your room.
    ```
 4. First launch: allow the **spatial data** permission. If the room has not been scanned, Space Setup opens.
 
-Controls on the headset: point + **trigger / pinch** to select, **grip** or pinch on a chamber to carry it,
-both hands to scale/rotate, thumbstick while carrying to rotate/resize, **Y / B / Menu** (or left-hand
-pinch-and-hold 1 s) to open the collection.
+Controls on the headset: point + **trigger / pinch** to select, **grip** (hands: a **fist**) or trigger /
+pinch on a chamber to carry it, both hands to scale/rotate, thumbstick while carrying to rotate/resize,
+**X / Y / B / Menu** (or left-hand pinch-and-hold 1 s) to open the collection. With hand tracking a
+closed fist grabs (cases and aliens) and a pinch points and selects.
+
+**Holding an alien (like a pet).** Point at an alien (a gold ring appears at its feet and the laser turns
+gold) and squeeze the **grip** - or reach into the case and grab it, or make a **fist** at it with hand
+tracking, or hold the trigger / pinch on it. It comes out of its case into your hand, looks at you and
+keeps breathing. Turn your hand to look at it from every side; the **thumbstick** spins it (left/right)
+and zooms it (up/down, 0.5x - 2.5x); with **both hands** on it, spread them to zoom. Let go while it is
+over or inside its case and it drops straight back in; let go anywhere else and it floats home in an arc,
+lands and does a happy hop. The AI pauses while it is out, and a case being carried or resized can't be
+reached into. Tuning: `BP_MuseumPawn` → Near Alien Distance, Examine Spin Speed, Examine Zoom Speed /
+Range.
+
+**Removing a chamber.** Point at a case: next to the height knob a red **X** appears. Press it once and
+it asks "REMOVE? press again"; press it again within 3 s and the case, its habitat and its alien are
+removed (and forgotten by the saved museum). With hand tracking you can also pinch the X directly.
 
 **Floating chambers (no gravity).** A carried chamber stays exactly where it is let go, also in mid-air
 (a glowing disc appears under it). It is only set down when released within 5 cm above a real surface
@@ -161,7 +179,7 @@ you walk up to its glass. Moves follow the cartoon:
 |---|---|
 | Cannonbolt | **Roll** – curls up into his armoured ball (the Wii model's ball form), rolls fast, bounces off the glass, bowls props over |
 | XLR8 | **Dash** – super-speed zig-zag with blue after-images and speed streaks; also leaves after-images whenever he runs fast, and walks at 70 cm/s |
-| Heatblast | **Flare** – his head is always on fire (flickering flames + embers); flames surge and a fireball hits the glass |
+| Heatblast | **Flare** – his head is always on fire (flickering flames + embers); flames surge and a fireball hits the glass (classic collection only - he is no longer in the museum) |
 | Four Arms | **Flex** – turns to you, strikes a double-biceps pose with all four arms, pumps (power rings), then stomps a shockwave that makes the props jump; also **Pounce** |
 | Diamondhead | **Crystal burst** – crystal spikes burst out of the ground around him |
 | Ghostfreak | **Phase** – fades into mist, drifts unseen through everything, reappears |
@@ -172,10 +190,14 @@ you walk up to its glass. Moves follow the cartoon:
 | Wildvine | **Vines** – vines lash out to the glass, then an exploding seed pod |
 | Upgrade | **Melt** – melts into a liquid-metal puddle, slides away leaving glowing circuit lines, re-forms |
 | Grey Matter | **Scurry** – tiny quick zig-zag dashes with hops |
-| Stinkfly | **Fly** – takes off, circles the case banking into the turns, lands |
+| Stinkfly | **Fly** – takes off, circles the case banking into the turns, lands. His wings are separate meshes that buzz while he hovers and beat in big fast strokes when he flies, moves or is held |
 
 Effects are pooled glowing shapes and rings (`M_FXGlow`, `M_FXRing`, max 40 per alien) that stay inside
-the glass. Models also lean into turns and when speeding up, and turn slightly towards what they look at.
+the glass. Models also lean into turns and when speeding up, turn slightly towards what they look at,
+breathe slowly and shift their weight when standing, step when turning on the spot, squash a little on
+every step, and leave footprints: dust puffs on sand and soil, ripples in water, embers on lava. Their
+feet stand on the case floor (the movement component keeps the capsule about 2 cm up; the body is
+lowered by that gap).
 
 Sources for the moves: [Cannonbolt (Ben 10 Wiki)](https://ben10.fandom.com/wiki/Cannonbolt_(Classic)),
 [Upchuck (Ben 10 Wiki)](https://ben10.fandom.com/wiki/Upchuck),
@@ -203,6 +225,9 @@ Sources for the moves: [Cannonbolt (Ben 10 Wiki)](https://ben10.fandom.com/wiki/
 * **Model aliens** – `Data/Models/DA_Model_*`: `ModelMesh` (the imported static mesh), `ModelRotation`
   (fix-up if a model does not face +X), `ModelCredit` (shown on the info panel), `Height`, `Hovers`,
   behaviour and chamber colour. A model is scaled to `Height`, stood on its lowest point and centred.
+  `ModelParts` are extra meshes in the model's frame that swing around a joint (Stinkfly's wings): `Hinge`
+  and `Axis` in the mesh's space, and `Amount` / `Offset` / `Speed` (degrees either side of the offset,
+  beats per second) at rest and `FlyingAmount` / `FlyingOffset` / `FlyingSpeed` while flying.
 * **Moves** – on any alien data asset: `Habitat`, `SignatureActions`, `ActionChance`, `ActionColor`,
   `bHeadFlames`, `bSpeedTrail`, `PoseMesh` (a second pose of the model shown during Flex) and `BallMesh`
   (the rolled-up form for Roll). `Scripts/create_habitats_and_moves.py` sets them all.
@@ -235,27 +260,39 @@ Cannonbolt with his ball form) go through these scripts, in this order:
    invent, rebuilds game-engine shaders (Ghostfreak) as standard materials, reduces meshes above
    60 000 triangles, makes every texture a power of two (≤ 2048 colour, ≤ 1024 other maps), scales it
    to its display height and writes `SourceArt/Converted/<Id>.glb` plus a front/side preview `.png`.
+   Moving parts (`parts`: Stinkfly's wings) are kept out of the model and written per side as
+   `<Id>_WingL.glb` / `<Id>_WingR.glb` in the same frame, with the joint each swings around (the middle
+   and direction of the wing's base) in `manifest.json`.
    ```
    & "C:\Program Files\Blender Foundation\Blender 5.2\blender.exe" -b --factory-startup --python Scripts\blender_convert_models.py -- SourceArt\Downloaded SourceArt\Converted [Id ...]
    ```
 2. **Unreal** (editor closed) – `Scripts/import_downloaded_models.py` imports every `.glb` fresh into
-   `/Game/AlienMuseum/Models/<Id>/` (Interchange; no Nanite, no collision, turned to face +X), creates the
-   `DA_Model_*` assets and `DA_AlienCollection_Models`, and makes it the museum's collection.
+   `/Game/AlienMuseum/Models/<Id>/` (Interchange; no Nanite, no collision, turned to face +X) with its
+   moving parts (`PART_MOTION` sets how they swing), creates the `DA_Model_*` assets and
+   `DA_AlienCollection_Models`, and makes it the museum's collection.
    ```
    & "C:\Program Files\Epic Games\UE_5.7\Engine\Binaries\Win64\UnrealEditor-Cmd.exe" C:\Games\Ben10\Ben10.uproject -run=pythonscript -script="C:/Games/Ben10/Scripts/import_downloaded_models.py" -unattended -nosplash -nullrhi
    ```
    Add model ids after the script path (inside the quotes) to import only those.
-3. **Four Arms' flex pose** (Blender, optional) – `Scripts/blender_pose_fourarms.py` bends the T-pose
-   model's four forearms around the elbows (double biceps + lower arms across the belly) and writes
-   `SourceArt/Converted/FourArms_2_Flex.glb` in the same frame as the normal model.
+3. **Re-posing** (Blender) – `Scripts/blender_pose_models.py` bends the limbs of rig-less converted
+   models around their joints (a hand-made two-bone skin, same frame as the model) and lists the results
+   in `SourceArt/Converted/poses.json`: `FourArms_2_Flex` (double biceps, shown during Flex),
+   `FourArms_2_Rest` and `Wildvine_Rest` (arms relaxed at their sides; they replace the T-pose models,
+   and Four Arms gets taller now that his arms fit the case). Rigged T-pose models get their arms lowered
+   by the converter's `pose` setting instead.
+   ```
+   & "C:\Program Files\Blender Foundation\Blender 5.2\blender.exe" -b --factory-startup --python Scripts\blender_pose_models.py -- SourceArt\Converted [pose id ...]
+   ```
 4. **Habitats and moves** (Unreal, editor closed) – `Scripts/create_habitats_and_moves.py` creates the
-   `HAB_*` habitats, imports the flex pose and Cannonbolt's ball (sharing the models' materials where they
-   are the same model), and sets every alien's habitat, moves and extras. Run it after every import.
+   `HAB_*` habitats, imports the poses from `poses.json` and Cannonbolt's ball (sharing the models'
+   materials where they are the same model), sets every alien's habitat, moves and extras, and keeps the
+   classic Heatblast and Stinkfly out of the museum collection. Run it after every import.
 
 **Adding another download:** unzip it into `SourceArt/Downloaded/<name>/`, run
 `Scripts/blender_inspect_models.py` to see its size, rig, textures and a preview, add a line to `MODELS`
 (id, alien name, height, `rotate` if it lies down or faces sideways, `pose` for T-pose arms, `folder` /
-`file` for a download with several models, `colors` for materials that are just flat colours), convert
+`file` for a download with several models, `colors` for materials that are just flat colours, `parts` for
+a mirrored pair of moving meshes such as wings), convert
 it, add its id to `ORDER` in the import script (and to `EXTRA` if it is a new alien), run the import, add
 the alien to `MOVES` in `create_habitats_and_moves.py` and run that too.
 
@@ -283,9 +320,10 @@ only while the case is seen. Moves: pooled effects (≤ 40 per alien), 3 after-i
 * Features that can only be verified on the headset: passthrough, room loading, occluders, anchors,
   hand tracking and pinch. Everything else was tested in Play-In-Editor.
 * The models are rigid static meshes: moves bend, squash, lean, hide or swap the whole body (Four Arms
-  swaps to his flex pose, Cannonbolt to his ball), limbs are not animated. Only FourArms_2 (the T-pose
-  download) has a flex pose; FourArms_1 flexes with the pump and stomp only.
-* Heatblast has no downloaded model: the shape-built classic Heatblast is in the collection (his head
-  flames also attach to a future Heatblast model automatically).
+  swaps to his flex pose, Cannonbolt to his ball); apart from Stinkfly's wings, limbs are not animated.
+  Only FourArms_2 (the T-pose download) has a flex pose; FourArms_1 flexes with the pump and stomp only.
+* Heatblast was taken out of the museum (no model was downloaded for him). A saved case that held him
+  comes back empty; remove it with its red X or put another alien in. His head flames would attach to a
+  future Heatblast model automatically.
 * In a small case a wide alien (e.g. Cannonbolt, 50 cm across) has little room to roll or leap - make
   the case bigger with the handles.

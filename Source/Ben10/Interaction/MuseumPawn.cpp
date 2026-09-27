@@ -2,6 +2,7 @@
 
 #include "Interaction/MuseumPawn.h"
 #include "Interaction/MuseumHandInteractor.h"
+#include "Aliens/AlienCharacter.h"
 #include "Chamber/AlienChamber.h"
 #include "Core/MuseumAssets.h"
 #include "Core/MuseumDirector.h"
@@ -10,6 +11,7 @@
 #include "Data/AlienDataAsset.h"
 #include "Ben10.h"
 #include "Camera/CameraComponent.h"
+#include "Components/CapsuleComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "EngineUtils.h"
 #include "EnhancedInputComponent.h"
@@ -30,6 +32,7 @@ namespace
 {
 	const FLinearColor ValidColor(0.3f, 1.0f, 0.5f);
 	const FLinearColor InvalidColor(1.0f, 0.3f, 0.25f);
+	const FLinearColor AlienTargetColor(1.0f, 0.8f, 0.25f); // gold: this alien can be picked up
 }
 
 AMuseumPawn::AMuseumPawn()
@@ -164,6 +167,7 @@ void AMuseumPawn::CreateDefaultInput()
 	MakeAction(GrabLeftAction, TEXT("IA_Museum_GrabLeft"), EInputActionValueType::Axis1D);
 	MakeAction(GrabRightAction, TEXT("IA_Museum_GrabRight"), EInputActionValueType::Axis1D);
 	MakeAction(MenuAction, TEXT("IA_Museum_Menu"), EInputActionValueType::Boolean);
+	MakeAction(RemoveAction, TEXT("IA_Museum_Remove"), EInputActionValueType::Boolean);
 	MakeAction(AdjustAction, TEXT("IA_Museum_Adjust"), EInputActionValueType::Axis2D);
 	MakeAction(LookAction, TEXT("IA_Museum_Look"), EInputActionValueType::Axis2D);
 	MakeAction(MoveAction, TEXT("IA_Museum_Move"), EInputActionValueType::Axis2D);
@@ -194,6 +198,7 @@ void AMuseumPawn::CreateDefaultInput()
 	Map(SelectRightAction, TEXT("OculusTouch_Right_Trigger_Axis"));
 	Map(GrabLeftAction, TEXT("OculusTouch_Left_Grip_Axis"));
 	Map(GrabRightAction, TEXT("OculusTouch_Right_Grip_Axis"));
+	Map(MenuAction, TEXT("OculusTouch_Left_X_Click"));
 	Map(MenuAction, TEXT("OculusTouch_Left_Y_Click"));
 	Map(MenuAction, TEXT("OculusTouch_Right_B_Click"));
 	Map(MenuAction, TEXT("OculusTouch_Left_Menu_Click"));
@@ -208,6 +213,7 @@ void AMuseumPawn::CreateDefaultInput()
 	Map(SelectRightAction, TEXT("LeftMouseButton"));
 	Map(GrabRightAction, TEXT("RightMouseButton"));
 	Map(MenuAction, TEXT("Tab"));
+	Map(RemoveAction, TEXT("Delete"));
 	Map(AdjustAction, TEXT("C"));                            // rotate +
 	Negate(Map(AdjustAction, TEXT("Z")));                    // rotate -
 	Swizzle(Map(AdjustAction, TEXT("E")));                   // bigger
@@ -272,6 +278,7 @@ void AMuseumPawn::SetupPlayerInputComponent(UInputComponent* PlayerInputComponen
 	Input->BindAction(GrabRightAction, ETriggerEvent::Started, this, &AMuseumPawn::OnGrabRightStarted);
 	Input->BindAction(GrabRightAction, ETriggerEvent::Completed, this, &AMuseumPawn::OnGrabRightCompleted);
 	Input->BindAction(MenuAction, ETriggerEvent::Started, this, &AMuseumPawn::OnMenu);
+	Input->BindAction(RemoveAction, ETriggerEvent::Started, this, &AMuseumPawn::OnRemove);
 	Input->BindAction(AdjustAction, ETriggerEvent::Triggered, this, &AMuseumPawn::OnAdjust);
 	Input->BindAction(AdjustAction, ETriggerEvent::Completed, this, &AMuseumPawn::OnAdjustCompleted);
 	Input->BindAction(LookAction, ETriggerEvent::Triggered, this, &AMuseumPawn::OnLook);
@@ -297,6 +304,74 @@ void AMuseumPawn::OnMenu(const FInputActionValue&)
 	{
 		Director->ToggleCollectionPanel();
 	}
+}
+
+void AMuseumPawn::OnRemove(const FInputActionValue&)
+{
+	for (UMuseumHandInteractor* Hand : { RightHand.Get(), LeftHand.Get() })
+	{
+		if (AAlienChamber* Chamber = Cast<AAlienChamber>(Hand->GetPointerHit().Actor.Get()))
+		{
+			PressRemove(Chamber);
+			return;
+		}
+	}
+}
+
+void AMuseumPawn::PressRemove(AAlienChamber* Chamber)
+{
+	AMuseumDirector* Director = GetDirector();
+	if (!Chamber || !Director)
+	{
+		return;
+	}
+	if (!Chamber->PressRemoveButton())
+	{
+		Director->SetStatusText(TEXT("Press the red X again to remove this chamber and its alien."));
+		return;
+	}
+	// Let go of everything that belongs to it first.
+	for (UMuseumHandInteractor* Hand : { LeftHand.Get(), RightHand.Get() })
+	{
+		if (GetGrab(Hand).Chamber.Get() == Chamber)
+		{
+			EndGrab(Hand);
+		}
+		if (GetResize(Hand).Chamber.Get() == Chamber)
+		{
+			EndResize(Hand);
+		}
+		const AAlienCharacter* Held = GetAlienGrab(Hand).Alien.Get();
+		if (Held && Held->GetHomeChamber() == Chamber)
+		{
+			EndAlienGrab(Hand);
+		}
+	}
+	Director->RemoveChamber(Chamber);
+	Director->SetStatusText(TEXT("Chamber removed."));
+}
+
+AAlienChamber* AMuseumPawn::FindRemoveButton(const UMuseumHandInteractor* Hand) const
+{
+	// Under the ray...
+	const FMuseumPointerHit& Hit = Hand->GetPointerHit();
+	AAlienChamber* Chamber = Cast<AAlienChamber>(Hit.Actor.Get());
+	if (Chamber && Chamber->IsRemoveButton(Hit.Component.Get()))
+	{
+		return Chamber;
+	}
+	// ... or pinched right at it (hand tracking).
+	if (const AMuseumDirector* Director = GetDirector())
+	{
+		for (AAlienChamber* Candidate : Director->GetChambers())
+		{
+			if (Candidate->IsRemoveButtonNear(Hand->GetGrabLocation(), NearGrabDistance * 0.75f))
+			{
+				return Candidate;
+			}
+		}
+	}
+	return nullptr;
 }
 
 void AMuseumPawn::OnAdjust(const FInputActionValue& Value)
@@ -458,6 +533,24 @@ void AMuseumPawn::HandleSelect(UMuseumHandInteractor* Hand, bool bPressed)
 {
 	if (!bPressed)
 	{
+		// Let go before the hold time on an alien: a click - its case's info panel.
+		FAlienPress& Press = GetAlienPress(Hand);
+		AAlienCharacter* Clicked = Press.Alien.Get();
+		Press = FAlienPress();
+		if (Clicked)
+		{
+			if (AAlienChamber* Chamber = Clicked->GetHomeChamber())
+			{
+				Chamber->ToggleInfoPanel();
+			}
+			return;
+		}
+		const FHandAlien& Held = GetAlienGrab(Hand);
+		if (Held.bActive && Held.bFromSelect)
+		{
+			EndAlienGrab(Hand);
+			return;
+		}
 		const FHandResize& Resize = GetResize(Hand);
 		if (Resize.Chamber.IsValid() && Resize.bFromSelect)
 		{
@@ -472,10 +565,51 @@ void AMuseumPawn::HandleSelect(UMuseumHandInteractor* Hand, bool bPressed)
 		return;
 	}
 
+	// Holding an alien with the grip: the trigger does nothing.
+	if (GetAlienGrab(Hand).bActive)
+	{
+		return;
+	}
+
 	// A chamber's resize handle (at the hand or under the ray): drag it.
 	if (Mode == EMuseumPawnMode::Default && TryBeginResize(Hand, true))
 	{
 		return;
+	}
+
+	// A chamber's red X: remove the chamber (asks for a second press).
+	if (AAlienChamber* ToRemove = FindRemoveButton(Hand))
+	{
+		if (Mode != EMuseumPawnMode::Default)
+		{
+			SetMode(EMuseumPawnMode::Default);
+		}
+		PressRemove(ToRemove);
+		return;
+	}
+
+	// An alien: right at the hand it is picked up at once; by ray a quick click shows its case's
+	// info panel and holding picks it up (UpdateAlienPresses).
+	if (Mode == EMuseumPawnMode::Default)
+	{
+		bool bNear = false;
+		if (AAlienCharacter* Alien = FindAlienToGrab(Hand, bNear))
+		{
+			if (bNear)
+			{
+				if (BeginAlienGrab(Hand, Alien, true, true))
+				{
+					return;
+				}
+			}
+			else
+			{
+				FAlienPress& Press = GetAlienPress(Hand);
+				Press.Alien = Alien;
+				Press.StartTime = GetWorld()->GetTimeSeconds();
+				return;
+			}
+		}
 	}
 
 	// Chamber right at the hand: always a grab.
@@ -509,14 +643,34 @@ void AMuseumPawn::HandleGrab(UMuseumHandInteractor* Hand, bool bPressed)
 {
 	if (bPressed)
 	{
+		if (GetAlienGrab(Hand).bActive)
+		{
+			return; // already holding an alien with the trigger / pinch
+		}
 		if (Mode == EMuseumPawnMode::Default && TryBeginResize(Hand, false))
 		{
 			return;
+		}
+		// An alien at the hand or under the ray: take it out of its case.
+		if (Mode == EMuseumPawnMode::Default)
+		{
+			bool bNear = false;
+			AAlienCharacter* Alien = FindAlienToGrab(Hand, bNear);
+			if (Alien && BeginAlienGrab(Hand, Alien, false, bNear))
+			{
+				return;
+			}
 		}
 		TryBeginGrab(Hand, false);
 	}
 	else
 	{
+		const FHandAlien& Held = GetAlienGrab(Hand);
+		if (Held.bActive && !Held.bFromSelect)
+		{
+			EndAlienGrab(Hand);
+			return;
+		}
 		const FHandResize& Resize = GetResize(Hand);
 		if (Resize.Chamber.IsValid() && !Resize.bFromSelect)
 		{
@@ -631,6 +785,295 @@ void AMuseumPawn::EndResize(UMuseumHandInteractor* Hand)
 		Chamber->EndResize();
 	}
 	Resize = FHandResize();
+}
+
+// ---------------------------------------------------------------------------------------------
+// Holding an alien
+// ---------------------------------------------------------------------------------------------
+
+AMuseumPawn::FHandAlien& AMuseumPawn::GetAlienGrab(const UMuseumHandInteractor* Hand)
+{
+	return Hand == LeftHand ? LeftAlien : RightAlien;
+}
+
+AMuseumPawn::FAlienPress& AMuseumPawn::GetAlienPress(const UMuseumHandInteractor* Hand)
+{
+	return Hand == LeftHand ? LeftPress : RightPress;
+}
+
+AAlienCharacter* AMuseumPawn::FindAlienNear(const FVector& Location, float MaxDistance) const
+{
+	AAlienCharacter* Best = nullptr;
+	float BestDistance = MaxDistance;
+	for (TActorIterator<AAlienCharacter> It(GetWorld()); It; ++It)
+	{
+		AAlienCharacter* Alien = *It;
+		const AAlienChamber* Chamber = Alien->GetHomeChamber();
+		if ((Alien->IsHeld() && !Alien->IsExamined()) || (Chamber && (Chamber->IsBeingGrabbed() || Chamber->IsBeingResized())))
+		{
+			continue; // riding in a carried case, flying home, or its case is being resized
+		}
+		const UCapsuleComponent* Capsule = Alien->GetCapsuleComponent();
+		const FVector Center = Capsule->GetComponentLocation();
+		const FVector Axis = Capsule->GetUpVector() * Capsule->GetScaledCapsuleHalfHeight_WithoutHemisphere();
+		const FVector Closest = FMath::ClosestPointOnSegment(Location, Center - Axis, Center + Axis);
+		const float Distance = FMath::Max(0.f, static_cast<float>(FVector::Dist(Location, Closest)) - Capsule->GetScaledCapsuleRadius());
+		if (Distance <= BestDistance)
+		{
+			Best = Alien;
+			BestDistance = Distance;
+		}
+	}
+	return Best;
+}
+
+AAlienCharacter* AMuseumPawn::FindAlienOnRay(const UMuseumHandInteractor* Hand, FVector* OutHitLocation) const
+{
+	// The ray stops on the case's pointer box; look through it for the alien inside.
+	const FMuseumPointerHit& Hit = Hand->GetPointerHit();
+	const AAlienChamber* Chamber = Cast<AAlienChamber>(Hit.Actor.Get());
+	if (!Chamber || Chamber->GetResizeAxis(Hit.Component.Get()) != EChamberResizeAxis::None || Chamber->IsRemoveButton(Hit.Component.Get())
+		|| Chamber->IsBeingGrabbed() || Chamber->IsBeingResized())
+	{
+		return nullptr;
+	}
+	AAlienCharacter* Alien = Chamber->GetOccupant();
+	if (!Alien || Alien->IsHeld())
+	{
+		return nullptr;
+	}
+	// Closest approach of the ray to the capsule's axis, a little wider than the body so a small
+	// alien is easy to point at.
+	const UCapsuleComponent* Capsule = Alien->GetCapsuleComponent();
+	const FVector Center = Capsule->GetComponentLocation();
+	const FVector Axis = Capsule->GetUpVector() * Capsule->GetScaledCapsuleHalfHeight_WithoutHemisphere();
+	const FVector Start = Hand->GetAimOrigin();
+	const FVector End = Start + Hand->GetAimDirection() * Hand->MaxPointerDistance;
+	FVector OnRay, OnAxis;
+	FMath::SegmentDistToSegmentSafe(Start, End, Center - Axis, Center + Axis, OnRay, OnAxis);
+	if (FVector::Dist(OnRay, OnAxis) > Capsule->GetScaledCapsuleRadius() + 3.f)
+	{
+		return nullptr;
+	}
+	if (OutHitLocation)
+	{
+		*OutHitLocation = OnRay;
+	}
+	return Alien;
+}
+
+AAlienCharacter* AMuseumPawn::FindAlienToGrab(const UMuseumHandInteractor* Hand, bool& bOutNear, FVector* OutHitLocation) const
+{
+	// Right at the hand first; a case at the hand wins over an alien further along the ray.
+	bOutNear = true;
+	if (AAlienCharacter* Alien = FindAlienNear(Hand->GetGrabLocation(), NearAlienDistance))
+	{
+		if (OutHitLocation)
+		{
+			*OutHitLocation = Alien->GetActorLocation();
+		}
+		return Alien;
+	}
+	bOutNear = false;
+	if (FindNearestChamber(Hand->GetGrabLocation(), NearGrabDistance))
+	{
+		return nullptr;
+	}
+	return FindAlienOnRay(Hand, OutHitLocation);
+}
+
+bool AMuseumPawn::BeginAlienGrab(UMuseumHandInteractor* Hand, AAlienCharacter* Alien, bool bFromSelect, bool bNear)
+{
+	FHandAlien& Grab = GetAlienGrab(Hand);
+	if (!Alien || Grab.bActive || GetGrab(Hand).Chamber.IsValid() || GetResize(Hand).Chamber.IsValid()
+		|| (Alien->IsHeld() && !Alien->IsExamined()))
+	{
+		return false;
+	}
+	if (const AAlienChamber* Chamber = Alien->GetHomeChamber())
+	{
+		if (Chamber->IsBeingGrabbed() || Chamber->IsBeingResized())
+		{
+			return false;
+		}
+	}
+	if (Mode != EMuseumPawnMode::Default)
+	{
+		SetMode(EMuseumPawnMode::Default);
+	}
+
+	const FQuat HandRotation = Hand->GetGrabRotation();
+	const FHandAlien& Other = GetAlienGrab(GetOtherHand(Hand));
+	if (Other.bActive && Other.Alien.Get() == Alien)
+	{
+		// The second hand on the same alien: spread the hands to zoom it.
+		Grab = Other;
+		bTwoHandAlien = true;
+		TwoHandAlienStartDistance = FMath::Max(5.f, static_cast<float>(FVector::Dist(LeftHand->GetGrabLocation(), RightHand->GetGrabLocation())));
+		TwoHandAlienStartZoom = Other.Zoom;
+	}
+	else
+	{
+		Alien->BeginExamine();
+		Grab = FHandAlien();
+		FVector Hold = Alien->GetActorLocation();
+		FQuat Facing = Alien->GetActorQuat();
+		if (!bNear)
+		{
+			// From afar it comes to the hand and turns its face to you.
+			Hold = Hand->GetGrabLocation() + Hand->GetAimDirection() * (Alien->GetCapsuleComponent()->GetScaledCapsuleRadius() + 8.f);
+			Facing = FRotator(0.f, (GetHeadLocation() - Hold).Rotation().Yaw, 0.f).Quaternion();
+		}
+		Grab.LocalOffset = HandRotation.Inverse().RotateVector(Hold - Hand->GetGrabLocation());
+		Grab.LocalRotation = HandRotation.Inverse() * Facing;
+	}
+	Grab.Alien = Alien;
+	Grab.bFromSelect = bFromSelect;
+	Grab.bActive = true;
+	Hand->SetLaserEnabled(false);
+	Alien->SetTargeted(false);
+	if (AMuseumDirector* Director = GetDirector())
+	{
+		Director->SetStatusText(TEXT("Turn your hand to look around it. Thumbstick: spin and zoom. Let go over its case to put it back."));
+	}
+	return true;
+}
+
+void AMuseumPawn::EndAlienGrab(UMuseumHandInteractor* Hand)
+{
+	FHandAlien& Grab = GetAlienGrab(Hand);
+	AAlienCharacter* Alien = Grab.Alien.Get();
+	Grab = FHandAlien();
+	Hand->SetLaserEnabled(true);
+	bTwoHandAlien = false;
+	if (!Alien)
+	{
+		return;
+	}
+
+	// The other hand still holds it: carry on from there.
+	UMuseumHandInteractor* OtherHand = GetOtherHand(Hand);
+	FHandAlien& Other = GetAlienGrab(OtherHand);
+	if (Other.bActive && Other.Alien.Get() == Alien)
+	{
+		const FQuat OtherRotation = OtherHand->GetGrabRotation();
+		Other.LocalOffset = OtherRotation.Inverse().RotateVector(Alien->GetActorLocation() - OtherHand->GetGrabLocation()) / FMath::Max(Other.Zoom, 0.01f);
+		Other.LocalRotation = OtherRotation.Inverse() * Alien->GetActorQuat();
+		Other.Spin = 0.f;
+		return;
+	}
+	Alien->EndExamine();
+}
+
+void AMuseumPawn::UpdateAlienPresses()
+{
+	for (UMuseumHandInteractor* Hand : { LeftHand.Get(), RightHand.Get() })
+	{
+		FAlienPress& Press = GetAlienPress(Hand);
+		AAlienCharacter* Alien = Press.Alien.Get();
+		if (!Alien || !Hand->IsSelectPressed())
+		{
+			Press = FAlienPress();
+		}
+		else if (GetWorld()->GetTimeSeconds() - Press.StartTime >= ClickMaxTime)
+		{
+			Press = FAlienPress();
+			BeginAlienGrab(Hand, Alien, true, false); // held long enough: pick it up
+		}
+	}
+}
+
+void AMuseumPawn::UpdateAlienGrabs(float DeltaSeconds)
+{
+	// Two hands on one alien: it sits between them, spreading them zooms.
+	if (bTwoHandAlien)
+	{
+		AAlienCharacter* Alien = LeftAlien.Alien.Get();
+		if (Alien && Alien->IsExamined() && RightAlien.Alien.Get() == Alien && LeftHand->IsTracked() && RightHand->IsTracked())
+		{
+			const FVector L = LeftHand->GetGrabLocation();
+			const FVector R = RightHand->GetGrabLocation();
+			const float Spread = FMath::Max(5.f, static_cast<float>(FVector::Dist(L, R)));
+			const float Zoom = FMath::Clamp(TwoHandAlienStartZoom * Spread / TwoHandAlienStartDistance, ExamineZoomRange.X, ExamineZoomRange.Y);
+			LeftAlien.Zoom = RightAlien.Zoom = Zoom;
+			Alien->SetExamineTarget((L + R) * 0.5f, Alien->GetActorQuat(), Zoom);
+			return;
+		}
+		bTwoHandAlien = false;
+	}
+
+	for (UMuseumHandInteractor* Hand : { LeftHand.Get(), RightHand.Get() })
+	{
+		FHandAlien& Grab = GetAlienGrab(Hand);
+		if (!Grab.bActive)
+		{
+			continue;
+		}
+		AAlienCharacter* Alien = Grab.Alien.Get();
+		if (!Alien || !Alien->IsExamined() || !Hand->IsTracked())
+		{
+			EndAlienGrab(Hand); // its case was removed, or the hand was lost
+			continue;
+		}
+		// Thumbstick / Z C Q E: X spins it, Y zooms.
+		if (FMath::Abs(AdjustInput.X) > 0.2f)
+		{
+			Grab.Spin += AdjustInput.X * ExamineSpinSpeed * DeltaSeconds;
+		}
+		if (FMath::Abs(AdjustInput.Y) > 0.2f)
+		{
+			Grab.Zoom = FMath::Clamp(Grab.Zoom * (1.f + AdjustInput.Y * ExamineZoomSpeed * DeltaSeconds), ExamineZoomRange.X, ExamineZoomRange.Y);
+		}
+		// Rigidly in the hand; zooming scales it around the hand.
+		const FQuat HandRotation = Hand->GetGrabRotation();
+		const FVector Target = Hand->GetGrabLocation() + HandRotation.RotateVector(Grab.LocalOffset * Grab.Zoom);
+		const FQuat Rotation = HandRotation * Grab.LocalRotation * FQuat(FVector::UpVector, FMath::DegreesToRadians(Grab.Spin));
+		Alien->SetExamineTarget(Target, Rotation, Grab.Zoom);
+	}
+}
+
+void AMuseumPawn::UpdateAlienTargets()
+{
+	// The alien each free hand would pick up: a gold ring at its feet and a gold laser to it.
+	UMuseumHandInteractor* Hands[2] = { LeftHand.Get(), RightHand.Get() };
+	AAlienCharacter* NewTargets[2] = { nullptr, nullptr };
+	for (int32 i = 0; i < 2; ++i)
+	{
+		UMuseumHandInteractor* Hand = Hands[i];
+		if (Mode != EMuseumPawnMode::Default || !Hand->IsTracked() || GetGrab(Hand).Chamber.IsValid()
+			|| GetResize(Hand).Chamber.IsValid() || GetAlienGrab(Hand).bActive)
+		{
+			continue;
+		}
+		bool bNear = false;
+		FVector Point = FVector::ZeroVector;
+		AAlienCharacter* Alien = FindAlienToGrab(Hand, bNear, &Point);
+		if (!Alien || Alien->IsExamined())
+		{
+			continue;
+		}
+		NewTargets[i] = Alien;
+		if (!bNear)
+		{
+			Hand->SetLaserOverride(Point, AlienTargetColor);
+		}
+	}
+	for (int32 i = 0; i < 2; ++i)
+	{
+		AAlienCharacter* Old = TargetedAlien[i].Get();
+		if (Old && Old != NewTargets[0] && Old != NewTargets[1])
+		{
+			Old->SetTargeted(false);
+		}
+	}
+	for (int32 i = 0; i < 2; ++i)
+	{
+		if (NewTargets[i])
+		{
+			NewTargets[i]->SetTargeted(true);
+		}
+		TargetedAlien[i] = NewTargets[i];
+	}
 }
 
 bool AMuseumPawn::TryBeginGrab(UMuseumHandInteractor* Hand, bool bFromSelect)
@@ -804,7 +1247,7 @@ void AMuseumPawn::UpdateHover()
 		UMuseumHandInteractor* Hand = Hands[i];
 		AActor* NewActor = nullptr;
 		UPrimitiveComponent* NewComponent = nullptr;
-		if (Hand->IsTracked() && !GetGrab(Hand).Chamber.IsValid() && !GetResize(Hand).Chamber.IsValid())
+		if (Hand->IsTracked() && !GetGrab(Hand).Chamber.IsValid() && !GetResize(Hand).Chamber.IsValid() && !GetAlienGrab(Hand).bActive)
 		{
 			NewActor = Hand->GetPointerHit().Actor.Get();
 			NewComponent = Hand->GetPointerHit().Component.Get();
@@ -973,6 +1416,9 @@ void AMuseumPawn::UpdateMenuGesture(float DeltaSeconds)
 	const bool bHolding = LeftHand->GetSource() == EMuseumHandSource::Hand
 		&& LeftHand->IsSelectPressed()
 		&& !LeftGrab.Chamber.IsValid()
+		&& !LeftResize.Chamber.IsValid()
+		&& !LeftAlien.bActive
+		&& !LeftPress.Alien.IsValid()
 		&& !Cast<IMuseumInteractable>(LeftHand->GetPointerHit().Actor.Get());
 
 	if (!bHolding)
@@ -1005,7 +1451,10 @@ void AMuseumPawn::Tick(float DeltaSeconds)
 
 	UpdateResizes();
 	UpdateGrabs(DeltaSeconds);
+	UpdateAlienPresses();
+	UpdateAlienGrabs(DeltaSeconds);
 	UpdateHover();
+	UpdateAlienTargets();
 	UpdatePlacement(DeltaSeconds);
 	UpdateMenuGesture(DeltaSeconds);
 }
