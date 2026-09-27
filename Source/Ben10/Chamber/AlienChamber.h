@@ -414,6 +414,9 @@ private:
 	void RefreshSizeLabel();
 	void FaceViewer(USceneComponent* Component, float DeltaSeconds, bool bInstant = false) const;
 
+	/** Moves the (walking) occupant along when the case moves without a hand, e.g. anchor corrections. */
+	void CarryOccupantAlong();
+
 	/** Inside half size of the glass in chamber space (X = depth, Y = width; a round pod uses its radius). */
 	FVector2f GetInnerHalfLocal() const;
 
@@ -488,4 +491,8 @@ private:
 	TWeakObjectPtr<const UPrimitiveComponent> ResizeHandle;
 	EChamberResizeAxis ResizeAxis = EChamberResizeAxis::None;
 	float ResizeStartSize = 0.f;
+
+	/** Last frame's pose, to notice moves that did not come from a grab. */
+	FTransform LastTransform = FTransform::Identity;
+	bool bHasLastTransform = false;
 };

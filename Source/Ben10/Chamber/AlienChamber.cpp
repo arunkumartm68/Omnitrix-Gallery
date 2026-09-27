@@ -1057,6 +1057,9 @@ void AAlienChamber::NotifyPlaced()
 	{
 		Occupant->SetHeld(false);
 	}
+	// The alien rode along while attached; start tracking unaided moves from here.
+	LastTransform = GetActorTransform();
+	bHasLastTransform = true;
 	OnPlaced.Broadcast(this);
 }
 
@@ -1130,6 +1133,24 @@ void AAlienChamber::RefreshInfoText()
 	InfoBody->SetText(FText::FromString(Body));
 }
 
+void AAlienChamber::CarryOccupantAlong()
+{
+	const FTransform Current = GetActorTransform();
+	// While carried the alien is attached and rides along by itself. Otherwise the case can still be
+	// moved without a hand - spatial-anchor corrections, settling - and the walking alien must go with it.
+	if (bHasLastTransform && Occupant && !Occupant->IsHeld()
+		&& (!Current.GetLocation().Equals(LastTransform.GetLocation(), 0.05)
+			|| !Current.GetRotation().Equals(LastTransform.GetRotation(), 1.e-4)))
+	{
+		const FVector Local = LastTransform.InverseTransformPositionNoScale(Occupant->GetActorLocation());
+		const float YawDelta = FRotator::NormalizeAxis(Current.Rotator().Yaw - LastTransform.Rotator().Yaw);
+		Occupant->SetActorLocationAndRotation(Current.TransformPositionNoScale(Local),
+			FRotator(0.f, Occupant->GetActorRotation().Yaw + YawDelta, 0.f), false, nullptr, ETeleportType::TeleportPhysics);
+	}
+	LastTransform = Current;
+	bHasLastTransform = true;
+}
+
 void AAlienChamber::FaceViewer(USceneComponent* Component, float DeltaSeconds, bool bInstant) const
 {
 	APlayerCameraManager* Camera = UGameplayStatics::GetPlayerCameraManager(this, 0);
@@ -1149,6 +1170,8 @@ void AAlienChamber::FaceViewer(USceneComponent* Component, float DeltaSeconds, b
 void AAlienChamber::Tick(float DeltaSeconds)
 {
 	Super::Tick(DeltaSeconds);
+
+	CarryOccupantAlong();
 
 	if (bGrabbed)
 	{

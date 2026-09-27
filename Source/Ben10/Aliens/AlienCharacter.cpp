@@ -311,7 +311,10 @@ void AAlienCharacter::UpdateContainment(float DeltaSeconds)
 	const bool bFellThrough = Location.Z < Chamber->GetFloorZ() - 25.f * Scale;
 	if (bOutside || bFellThrough)
 	{
-		UE_LOG(LogAlienMuseum, Warning, TEXT("%s escaped its chamber, returning it to the spawn point"), *GetName());
+		const FVector Local = Chamber->GetActorTransform().InverseTransformPosition(Location);
+		UE_LOG(LogAlienMuseum, Warning, TEXT("%s (%s) %s its chamber at local %s (inside %s cm), returning it to the spawn point"),
+			*GetName(), AlienData ? *AlienData->AlienId.ToString() : TEXT("?"), bFellThrough ? TEXT("fell through") : TEXT("left"),
+			*Local.ToCompactString(), *Chamber->GetInnerSize().ToCompactString());
 		StopMoving();
 		GetCharacterMovement()->StopMovementImmediately();
 		TeleportTo(Chamber->GetAlienSpawnLocation(GetCapsuleComponent()->GetScaledCapsuleHalfHeight()), FRotator(0.f, GetActorRotation().Yaw, 0.f));
