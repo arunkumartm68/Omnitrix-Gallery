@@ -13,6 +13,9 @@ MODELS below (or only the named ones) this script:
   6. writes <output>/<Id>.glb, <output>/<Id>.png (front + right preview) and <output>/manifest.json.
 Moving parts (Stinkfly's wings) are exported as their own .glb files in the model's frame, one per
 side, with the joint they swing around, so the game can flap them.
+Rigged models (`rigged`: Wildmutt, Ghostfreak) keep their skeleton: the pose / stance set up here
+becomes the rig's rest pose, and besides the static <Id>.glb (same shape and frame) the skinned
+<Id>_Rig.glb is written, which the game animates bone by bone (walk cycle, tail...).
 """
 import math
 import os
@@ -20,7 +23,7 @@ import sys
 import traceback
 
 import bpy
-from mathutils import Euler, Matrix, Vector
+from mathutils import Euler, Matrix, Quaternion, Vector
 
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 import blender_models_common as common  # noqa: E402
@@ -32,11 +35,17 @@ MAX_SPAN = 56.0         # cm: widest pose that still fits the default chamber wi
 
 # One entry per downloaded zip. height = display height in cm (at chamber scale 1).
 # rotate = degrees (X, Y, Z) so the model stands up and faces Blender's front (-Y).
-# pose = upper-arm bone -> degrees to lower it (baked T-pose -> relaxed pose).
+# pose = bone -> degrees to lower it (baked T-pose -> relaxed pose), or (degrees, "forward") to swing
+#        it forward around the vertical axis, or (degrees, "raise") to pitch it up (a tail).
 # folder / file = a download holding more than one model (the key is then just a name).
 # colors = material -> linear RGB, replacing whatever the material had (texture or colour).
 # parts = mesh object -> part name: a mirrored pair (wings) kept out of the model and exported as
 #         <Id>_<name>L / <Id>_<name>R (the character's left / right), each swinging at its base.
+# ik = limbs placed by two-bone IK, given for the +X (left) side and mirrored: bones (upper, lower,
+#      end), target = where the end bone's joint goes, pole = where the middle joint bends towards
+#      (both in height units from the model's centre / floor), aim = direction the end bone points,
+#      aim_bones = other bones of the limb (a thumb) -> the direction they point.
+# rigged = also export the skinned model (<Id>_Rig.glb) with the pose above as its rest pose.
 MODELS = {
     "ben-10-cannonbolt": dict(id="Cannonbolt_1", alien="Cannonbolt", height=50),
     "cannonbolt": dict(id="Cannonbolt_2", alien="Cannonbolt", height=50,
@@ -56,16 +65,23 @@ MODELS = {
     "fourarms-ben-10": dict(id="FourArms_2", alien="Four Arms", height=65, rotate=(90, 0, 0), no_emission=True),
     "funko-pop-ben10-echo-echo-free": dict(id="EchoEcho", alien="Echo Echo", height=35, max_triangles=50000),
     "ghostfreak": dict(id="Ghostfreak", alien="Ghostfreak", height=58, rotate=(0, 0, -90), rebuild_materials=True,
-                       pose={"bip_upperArm_L": 60, "bip_upperArm_R": 60}),
-    "glutao-upchuck": dict(id="Upchuck", alien="Upchuck", height=38, pose={"Braço": 60, "Braço_2": 60}),
+                       pose={"bip_upperArm_L": 60, "bip_upperArm_R": 60}, rigged=True),
+    # His tail hung below his shoes (the lowest point), so he floated: raised, it lies on the ground.
+    "glutao-upchuck": dict(id="Upchuck", alien="Upchuck", height=38,
+                           pose={"Braço": 60, "Braço_2": 60, "Cauda": (22, "raise")}),
     "grey-matter-ben-10-vilgax-attacks-fan-model": dict(id="GreyMatter", alien="Grey Matter", height=20),
     "ripjaws-ben-10": dict(id="Ripjaws", alien="Ripjaws", height=55),
     "upgrade-ben-10-classic": dict(id="Upgrade_1", alien="Upgrade", height=52, rotate=(0, 0, -90),
                                    pose={"bip_upperarm_L": 60, "bip_upperarm_R": 60}),
     "upgrade-ben-10-vilgax-attacks-fan-model": dict(id="Upgrade_2", alien="Upgrade", height=52,
                                                     pose={"LeftUpperArm": 30, "RightUpperArm": 30}),
-    "wildmutt": dict(id="Wildmutt", alien="Wildmutt", height=40, rotate=(0, 0, -90),
-                     pose={"bip_upperArm_L": (50, "forward"), "bip_upperArm_R": (50, "forward")}),
+    # On all fours: the front paws planted a little ahead of and outside the shoulders, elbows bent
+    # back like a gorilla's, claws on the ground. The game walks him with IK from this stance.
+    "wildmutt": dict(id="Wildmutt", alien="Wildmutt", height=40, rotate=(0, 0, -90), rigged=True,
+                     colors={"Body": (0.9, 0.28, 0.03), "Body_1": (0.9, 0.28, 0.03)},  # the cartoon's orange, not yellow
+                     ik=[dict(bones=("bip_upperArm_L", "bip_lowerArm_L", "bip_hand_L"),
+                              target=(0.30, -0.22, 0.09), pole=(0.55, 0.55, 0.47), aim=(0.06, -0.95, -0.30),
+                              aim_bones={"bip_thumb_0_L": (-0.35, -0.85, -0.40)})]),  # thumb along the paw
     # Ben 10: Protector of Earth (Wii) Cannonbolt: the standing figure and his rolled-up ball form.
     "cannonbolt-wii": dict(id="Cannonbolt_3", alien="Cannonbolt", height=50,
                            folder="ben-10-cannonbolt-and-ball", file="Model.obj"),
@@ -326,6 +342,7 @@ def pose_arms(pose, meshes):
         to_arm = arm.matrix_world.to_3x3().inverted()
         front_back = (to_arm @ Vector((0, 1, 0))).normalized()
         vertical = (to_arm @ Vector((0, 0, 1))).normalized()
+        lateral = (to_arm @ Vector((1, 0, 0))).normalized()
         for bone_name, setting in pose.items():
             degrees, mode = setting if isinstance(setting, tuple) else (setting, "lower")
             pb = arm.pose.bones.get(bone_name)
@@ -335,12 +352,242 @@ def pose_arms(pose, meshes):
             side = 1.0 if (arm.matrix_world @ pb.head).x > center_x else -1.0
             if mode == "forward":
                 rot = Matrix.Rotation(-math.radians(degrees) * side, 4, vertical)
+            elif mode == "raise":
+                rot = Matrix.Rotation(math.radians(degrees), 4, lateral)  # pitches a backward-pointing bone up
             else:
                 rot = Matrix.Rotation(math.radians(degrees) * side, 4, front_back)
             head = pb.head.copy()
             pb.matrix = Matrix.Translation(head) @ rot @ Matrix.Translation(-head) @ pb.matrix
             bpy.context.view_layer.update()
             print("  pose:", bone_name, mode, degrees, "deg")
+
+
+def armature():
+    """The rig the meshes are skinned to (the first armature in the scene)."""
+    for obj in common.mesh_objects():
+        for mod in obj.modifiers:
+            if mod.type == "ARMATURE" and mod.object:
+                return mod.object
+    return next((o for o in bpy.context.scene.objects if o.type == "ARMATURE"), None)
+
+
+def mirror_name(name):
+    for left, right in (("_L", "_R"), (".L", ".R"), ("Left", "Right")):
+        if left in name:
+            return name.replace(left, right)
+    return name
+
+
+def turn_bone(arm, pb, pivot, rotation):
+    """Turns a pose bone (and with it its children) by a world-space rotation around a world point."""
+    world = arm.matrix_world @ pb.matrix
+    turned = Matrix.Translation(pivot) @ rotation.to_matrix().to_4x4() @ Matrix.Translation(-pivot) @ world
+    pb.matrix = arm.matrix_world.inverted() @ turned
+    bpy.context.view_layer.update()
+
+
+def aim_rotation(current, wanted):
+    """Turns `current` to `wanted`: first around the vertical (heading), then up / down (elevation),
+    so a paw keeps its palm down instead of rolling over."""
+    def heading(v):
+        return math.atan2(v.y, v.x)
+
+    def elevation(v):
+        return math.atan2(v.z, math.hypot(v.x, v.y))
+    yaw = Quaternion((0.0, 0.0, 1.0), heading(wanted) - heading(current))
+    turned = yaw @ current
+    level = Vector((turned.x, turned.y, 0.0)).normalized()
+    pitch = Quaternion(level.cross(Vector((0.0, 0.0, 1.0))), elevation(wanted) - elevation(turned))
+    return pitch @ yaw
+
+
+def two_bone_ik(arm, names, target, pole, aim):
+    """Puts the end bone's joint at `target` by turning the upper and lower bones; the middle joint
+    bends towards `pole`. Then the end bone points along `aim` (all world space)."""
+    upper, lower, end = (arm.pose.bones.get(n) for n in names)
+    if not (upper and lower and end):
+        print("  ik: bones not found", names)
+        return
+    mw = arm.matrix_world
+    root, joint, tip = mw @ upper.head, mw @ lower.head, mw @ end.head
+    a, b = (joint - root).length, (tip - joint).length
+    to_target = target - root
+    reach = min(to_target.length, (a + b) * 0.999)
+    u = to_target.normalized()
+    v = pole - root
+    v = (v - u * v.dot(u)).normalized()
+    cos_a = max(-1.0, min(1.0, (a * a + reach * reach - b * b) / (2.0 * a * reach)))
+    new_joint = root + (u * cos_a + v * math.sqrt(1.0 - cos_a * cos_a)) * a
+    new_tip = root + u * reach
+    turn_bone(arm, upper, root, (joint - root).rotation_difference(new_joint - root))
+    joint_now, tip_now = mw @ lower.head, mw @ end.head
+    turn_bone(arm, lower, joint_now, (tip_now - joint_now).rotation_difference(new_tip - joint_now))
+    if aim is not None:
+        tip_now = mw @ end.head
+        turn_bone(arm, end, tip_now, aim_rotation((mw @ end.tail) - tip_now, aim))
+    print(f"  ik: {names[2]} at {tuple(round(c, 3) for c in (mw @ end.head))} (wanted {tuple(round(c, 3) for c in target)}), "
+          f"elbow bent {math.degrees(math.acos(cos_a)):.0f} deg")
+
+
+def place_limbs(specs, lo, hi):
+    """Two-bone IK for the cfg's `ik` limbs, the +X side as given and the -X side mirrored."""
+    arm = armature()
+    if not specs or arm is None:
+        return
+    height = hi.z - lo.z
+    cx, cy = (lo.x + hi.x) * 0.5, (lo.y + hi.y) * 0.5
+
+    def point(v, side):
+        return Vector((cx + side * v[0] * height, cy + v[1] * height, lo.z + v[2] * height))
+    for spec in specs:
+        for side in (1.0, -1.0):
+            names = spec["bones"] if side > 0 else tuple(mirror_name(n) for n in spec["bones"])
+            aim = Vector((side * spec["aim"][0], spec["aim"][1], spec["aim"][2])) if "aim" in spec else None
+            two_bone_ik(arm, names, point(spec["target"], side), point(spec["pole"], side), aim)
+            # Other bones of the limb (a thumb) pointed along a direction of their own.
+            for bone_name, direction in spec.get("aim_bones", {}).items():
+                pb = arm.pose.bones.get(bone_name if side > 0 else mirror_name(bone_name))
+                if pb is None:
+                    print("  ik: bone not found", bone_name)
+                    continue
+                head = arm.matrix_world @ pb.head
+                wanted = Vector((side * direction[0], direction[1], direction[2]))
+                turn_bone(arm, pb, head, aim_rotation((arm.matrix_world @ pb.tail) - head, wanted))
+
+
+def skin_loose_meshes(arm):
+    """Meshes that follow the rig by being parented (to a bone) rather than skinned get a vertex group
+    for that bone - or for the bone that moves the skin they sit on (the nearest skinned vertices) -
+    so they keep following it once the pose becomes the rest pose."""
+    from mathutils.kdtree import KDTree
+    skinned = [o for o in common.mesh_objects() if any(m.type == "ARMATURE" for m in o.modifiers)]
+    points = []
+    for obj in skinned:
+        names = {g.index: g.name for g in obj.vertex_groups}
+        for vertex in obj.data.vertices:
+            if vertex.groups:
+                strongest = max(vertex.groups, key=lambda g: g.weight)
+                points.append((obj.matrix_world @ vertex.co, names.get(strongest.group)))
+    tree = KDTree(len(points))
+    for i, (co, _name) in enumerate(points):
+        tree.insert(co, i)
+    tree.balance()
+    for obj in common.mesh_objects():
+        if any(m.type == "ARMATURE" for m in obj.modifiers):
+            continue
+        bone = obj.parent_bone if obj.parent == arm and obj.parent_type == "BONE" else ""
+        if not bone and points:
+            votes = {}
+            for vertex in obj.data.vertices:
+                _co, index, _dist = tree.find(obj.matrix_world @ vertex.co)
+                name = points[index][1]
+                votes[name] = votes.get(name, 0) + 1
+            bone = max(votes, key=votes.get)
+        world = obj.matrix_world.copy()
+        obj.parent = None
+        obj.matrix_world = world
+        group = obj.vertex_groups.new(name=bone)
+        group.add(list(range(len(obj.data.vertices))), 1.0, "REPLACE")
+        obj.modifiers.new("Armature", "ARMATURE").object = arm
+        print("  skinned loose mesh", obj.name, "to", bone)
+
+
+def bake_shape_keys(obj):
+    """Keeps the current shape-key mix as the plain mesh (modifiers can't be applied under shape keys)."""
+    if not obj.data.shape_keys:
+        return
+    mix = obj.shape_key_add(name="__mix", from_mix=True)
+    co = [0.0] * (len(obj.data.vertices) * 3)
+    mix.data.foreach_get("co", co)
+    obj.shape_key_clear()
+    obj.data.vertices.foreach_set("co", co)
+    obj.data.update()
+
+
+def make_pose_rest(arm):
+    """The current pose becomes the rig's rest pose: every skinned mesh takes the posed shape and keeps
+    its vertex weights, and the armature's rest pose moves to match."""
+    for obj in common.mesh_objects():
+        bake_shape_keys(obj)
+        for mod in list(obj.modifiers):
+            with bpy.context.temp_override(object=obj, active_object=obj, selected_objects=[obj], selected_editable_objects=[obj]):
+                bpy.ops.object.modifier_apply(modifier=mod.name)
+    for obj in bpy.context.scene.objects:
+        obj.select_set(obj == arm)
+    bpy.context.view_layer.objects.active = arm
+    bpy.ops.object.mode_set(mode="POSE")
+    bpy.ops.pose.armature_apply(selected=False)
+    bpy.ops.object.mode_set(mode="OBJECT")
+
+
+def remove_unused_bones(arm, body):
+    """Drops leaf bones that move no vertex (finger and toe tip markers): fewer bones to skin on Quest."""
+    groups = {g.index: g.name for g in body.vertex_groups}
+    used = set()
+    for vertex in body.data.vertices:
+        for g in vertex.groups:
+            if g.weight > 0.0:
+                used.add(groups.get(g.group))
+    for obj in bpy.context.scene.objects:
+        obj.select_set(obj == arm)
+    bpy.context.view_layer.objects.active = arm
+    bpy.ops.object.mode_set(mode="EDIT")
+    removed = 0
+    while True:
+        leaves = [eb for eb in arm.data.edit_bones if not eb.children and eb.name not in used]
+        if not leaves:
+            break
+        for eb in leaves:
+            arm.data.edit_bones.remove(eb)
+            removed += 1
+    bpy.ops.object.mode_set(mode="OBJECT")
+    print("  removed", removed, "unused bones,", len(arm.data.bones), "left")
+
+
+def normalize_rigged(arm, body, target_height_cm):
+    """normalize() for a skinned mesh and its armature: the same move and scale on both, applied."""
+    lo, hi = common.world_bounds([body])
+    size = hi - lo
+    span = max(size.x, size.y)
+    height_cm = min(target_height_cm, MAX_SPAN * size.z / span) if span > 0 else target_height_cm
+    scale = (height_cm / 100.0) / size.z
+    move = Matrix.Scale(scale, 4) @ Matrix.Translation(Vector((-(lo.x + hi.x) * 0.5, -(lo.y + hi.y) * 0.5, -lo.z)))
+    for obj in (body, arm):
+        world = obj.matrix_world.copy()
+        obj.parent = None
+        obj.matrix_world = move @ world
+    for obj in bpy.context.scene.objects:
+        obj.select_set(obj in (arm, body))
+    bpy.context.view_layer.objects.active = arm
+    bpy.ops.object.transform_apply(location=True, rotation=True, scale=True)
+    return height_cm
+
+
+def finish_rigged(cfg, out_dir):
+    """Rigged path of convert(): the posed rig becomes the rest pose; writes <Id>_Rig.glb (skinned)
+    and <Id>.glb (the same shape as a static mesh). Returns (static object, rig glb, triangles, bones)."""
+    arm = armature()
+    make_pose_rest(arm)
+    body = join(common.mesh_objects())
+    body.name = body.data.name = cfg["id"] + "_Skin"
+    triangles = decimate(body, cfg.get("max_triangles", MAX_TRIANGLES))
+    remove_unused_bones(arm, body)
+    normalize_rigged(arm, body, cfg["height"])
+    arm.name = cfg["id"] + "_Rig"
+    body.parent = arm  # both transforms are identity now; glTF wants the skin under its armature
+    body.modifiers.new("Armature", "ARMATURE").object = arm
+    shrink_textures(os.path.join(out_dir, "textures", cfg["id"]))
+    rig_glb = os.path.join(out_dir, cfg["id"] + "_Rig.glb")
+    export_glb(rig_glb, [arm, body], skinned=True)
+    # The same shape as a plain mesh: the museum's ModelMesh (bounds, after-images, fallback).
+    depsgraph = bpy.context.evaluated_depsgraph_get()
+    mesh = bpy.data.meshes.new_from_object(body.evaluated_get(depsgraph), preserve_all_data_layers=True, depsgraph=depsgraph)
+    mesh.transform(body.matrix_world)
+    static = bpy.data.objects.new(cfg["id"], mesh)
+    mesh.name = cfg["id"]
+    bpy.context.scene.collection.objects.link(static)
+    body.hide_render = True
+    return static, rig_glb, triangles, len(arm.data.bones)
 
 
 def bake_to_static_meshes():
@@ -459,15 +706,17 @@ def part_joint(obj):
 # Export
 # ---------------------------------------------------------------------------------------------
 
-def export_glb(path, objects=None):
-    """Writes the scene (or only the given objects) as a binary glTF."""
+def export_glb(path, objects=None, skinned=False):
+    """Writes the scene (or only the given objects) as a binary glTF; `skinned` keeps the armature
+    and the vertex weights (no animation)."""
     if objects is not None:
         for obj in bpy.context.scene.objects:
             obj.select_set(obj in objects)
     props = bpy.ops.export_scene.gltf.get_rna_type().properties.keys()
     wanted = dict(
-        filepath=path, export_format="GLB", use_selection=objects is not None, export_apply=True,
-        export_animations=False, export_skins=False, export_morph=False, export_cameras=False,
+        filepath=path, export_format="GLB", use_selection=objects is not None, export_apply=not skinned,
+        export_animations=False, export_skins=skinned, export_morph=False, export_cameras=False,
+        export_def_bones=False, export_rest_position_armature=True, export_leaf_bone=False,
         export_lights=False, export_yup=True, export_texcoords=True, export_normals=True,
         export_tangents=False, export_materials="EXPORT", export_image_format="AUTO",
         export_draco_mesh_compression_enable=False, export_extras=False,
@@ -490,7 +739,23 @@ def convert(folder_name, cfg, downloads, out_dir):
 
     apply_rotation(cfg.get("rotate"))
     reset_rigs()
+    rest_lo, rest_hi = common.world_bounds(common.mesh_objects())
+    if cfg.get("rigged"):
+        skin_loose_meshes(armature())
     pose_arms(cfg.get("pose"), common.mesh_objects())
+    place_limbs(cfg.get("ik"), rest_lo, rest_hi)
+    if cfg.get("rigged"):
+        static, rig_glb, triangles, bones = finish_rigged(cfg, out_dir)
+        glb = os.path.join(out_dir, cfg["id"] + ".glb")
+        export_glb(glb, [static])
+        common.render_views(os.path.join(out_dir, cfg["id"] + ".png"), [static])
+        lo, hi = common.world_bounds([static])
+        return {
+            "id": cfg["id"], "alien": cfg["alien"], "height_cm": round((hi.z - lo.z) * 100.0, 1),
+            "glb": glb, "rig_glb": rig_glb, "bones": bones, "source_folder": folder_name,
+            "source_file": os.path.basename(path), "importer": importer, "triangles": triangles,
+            "materials": len(static.data.materials), "textures": 0,
+        }
     meshes = bake_to_static_meshes()
 
     # Moving parts stay out of the model: their baked objects are named after the source object.

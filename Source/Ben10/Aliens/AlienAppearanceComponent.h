@@ -7,6 +7,9 @@
 // look-at, blink, wing flaps, flame flicker; models lean into turns and when speeding up), which is
 // far cheaper on Quest than skeletal meshes + animation blueprints. Signature moves
 // (UAlienActionComponent) bend the whole body through the action transform and extra lift.
+// A rigged model (the data asset's RiggedMesh, a skinned copy of the model) is animated bone by bone
+// from the data asset's Rig: legs walk with their paws planted (two-bone IK), the body bobs, sways and
+// breathes, the head looks around and sniffs, a tail waves.
 // A Blueprint subclass of AAlienCharacter with a skeletal mesh also works; this component then stays empty.
 
 #pragma once
@@ -18,6 +21,8 @@
 
 class UStaticMesh;
 class UStaticMeshComponent;
+class USkeletalMesh;
+class UPoseableMeshComponent;
 class UMaterialInstanceDynamic;
 class UMaterialInterface;
 
@@ -83,8 +88,12 @@ public:
 	void SetBodyVisible(bool bShow);
 	bool IsBodyVisible() const { return bBodyVisible; }
 
-	/** The imported model's mesh component (nullptr for shape-built bodies). */
+	/** The imported model's mesh component (nullptr for shape-built bodies). Hidden when the model is
+	 *  rigged: it then only gives the after-images their shape and place. */
 	UStaticMeshComponent* GetModelComponent() const { return ModelComponent; }
+
+	/** True when the body is a rigged model animated bone by bone. */
+	bool IsRigged() const { return RigComponent != nullptr; }
 
 	/** Shows a second pose of the model (same scale, feet on the ground) until EndPose(). */
 	bool ShowPose(UStaticMesh* PoseMesh);
@@ -127,6 +136,9 @@ private:
 	UStaticMesh* GetShapeMesh(EAlienPartShape Shape) const;
 	void AnimateDataParts(float SpeedAlpha);
 	void ApplyRootTransform();
+	void BuildRig(const UAlienDataAsset* Data, USkeletalMesh* Mesh);
+	void UpdateRig(float DeltaSeconds, float TurnAlpha, float Excite);
+	void AddRigTurn(int32 Bone, const FQuat& Turn);
 
 	UStaticMeshComponent* AddPart(const TCHAR* BaseName, UStaticMesh* Mesh, USceneComponent* Parent, const FTransform& Relative, UMaterialInterface* Material);
 	USceneComponent* AddPivot(const TCHAR* BaseName, USceneComponent* Parent, const FTransform& Relative);
@@ -148,6 +160,10 @@ private:
 
 	UPROPERTY(Transient)
 	TObjectPtr<UStaticMeshComponent> ModelComponent;
+
+	/** The rigged model (skinned, posed bone by bone every frame). */
+	UPROPERTY(Transient)
+	TObjectPtr<UPoseableMeshComponent> RigComponent;
 
 	/** The model's normal pose (while ShowPose swaps the mesh). */
 	UPROPERTY(Transient)
@@ -195,6 +211,46 @@ private:
 		float Cycle = 0.f;                     // own clock, so speed changes never jump
 	};
 	TArray<FModelPartMotion> ModelPartMotions;
+
+	/** A walking leg of the rig: bone indices and its rest geometry in component space. */
+	struct FRigLeg
+	{
+		int32 Upper = INDEX_NONE;
+		int32 Lower = INDEX_NONE;
+		int32 End = INDEX_NONE;
+		FVector Home = FVector::ZeroVector;   // where the paw stands in the rest pose
+		FVector Bend = FVector::ZeroVector;   // the way the elbow / knee points
+		float UpperLength = 1.f;
+		float LowerLength = 1.f;
+		float Phase = 0.f;
+		bool bFront = false;
+	};
+	FAlienRig RigSettings;
+	TArray<FRigLeg> RigLegs;
+	TArray<int32> RigParents;
+	TArray<FTransform> RigRestLocal;   // rest pose, bone space
+	TArray<FTransform> RigRestSpace;   // rest pose, component space
+	TArray<FTransform> RigPose;        // this frame, bone space (written to the component)
+	TArray<FTransform> RigSpace;       // this frame, component space
+	TArray<FQuat> RigTurns;            // this frame's extra turn of each bone, component space
+	TArray<int32> RigSpine;
+	TArray<int32> RigTail;
+	TArray<int32> RigFloating;
+	int32 RigNeck = INDEX_NONE;
+	int32 RigHead = INDEX_NONE;
+	int32 RigJaw = INDEX_NONE;
+	FVector RigTailDirection = FVector::DownVector;
+	float RigHeight = 1.f;             // model height in the rig's own units
+	float GaitCycle = 0.f;             // 0..1 through the step cycle
+	float GaitMoving = 0.f;            // 0 standing still .. 1 stepping (smoothed)
+	float Airborne = 0.f;              // 0 on the ground .. 1 leaping or held (smoothed)
+	float RigBreathCycle = 0.f;
+	float RigTailCycle = 0.f;
+	float SniffTimer = 3.f;
+	float SniffTime = -1.f;
+	float RigCrouch = 0.f;             // a move's squash, done as bent legs
+	float RigNod = 0.f;                // a move's pitch while on the ground, done by the head
+	float ModelMeshHeight = 1.f;       // the model mesh's own height (before scaling)
 
 	float ModelHeight = 32.f;
 	float ModelRadius = 10.f;

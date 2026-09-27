@@ -236,6 +236,8 @@ def import_poses():
         listing = json.load(handle)
     poses = {}
     for pose in listing:
+        if pose["source"] not in models.ORDER:
+            continue  # its model was taken out of the museum
         source = models.model_mesh_of(pose["source"])
         if source is None:
             print("POSE", pose["id"], "skipped:", pose["source"], "was not imported")

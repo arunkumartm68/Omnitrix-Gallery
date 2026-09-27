@@ -51,7 +51,7 @@ run) → Alien Collection panel appears in front of the player.
 | Interaction | `Source/Ben10/Interaction/` – `MuseumPawn`, `MuseumHandInteractor` |
 | UI | `Source/Ben10/UI/AlienCollectionPanel` |
 | Content | `Content/AlienMuseum/` – `Maps/L_AlienMuseum`, `Blueprints/BP_*`, `Data/DA_*`, `Data/Classic/DA_Classic_*`, `Data/Models/DA_Model_*`, `Data/Habitats/HAB_*`, `Models/<Id>/` (imported meshes, materials, textures), `Materials/M_*` |
-| Tools | `Scripts/create_classic_aliens.py` – shape-built classic aliens; `Scripts/blender_inspect_models.py`, `Scripts/blender_convert_models.py`, `Scripts/blender_models_common.py` – downloaded models → Unreal-ready `.glb`; `Scripts/blender_pose_models.py` – re-poses rig-less models (Four Arms' flex, relaxed Four Arms and Wildvine); `Scripts/import_downloaded_models.py` – `.glb` → meshes + `DA_Model_*` + collection; `Scripts/create_habitats_and_moves.py` – habitats, signature moves, pose / ball meshes; `Scripts/create_museum_materials.py` – glass, habitat and effect materials |
+| Tools | `Scripts/create_classic_aliens.py` – shape-built classic aliens; `Scripts/blender_inspect_models.py`, `Scripts/blender_convert_models.py`, `Scripts/blender_models_common.py` – downloaded models → Unreal-ready `.glb`; `Scripts/blender_pose_models.py` – re-poses rig-less models (Four Arms' flex, relaxed Four Arms and Wildvine); `Scripts/import_downloaded_models.py` – `.glb` → meshes + `DA_Model_*` + collection; `Scripts/create_habitats_and_moves.py` – habitats, signature moves, pose / ball meshes; `Scripts/create_museum_materials.py` – glass, habitat and effect materials; `Scripts/create_input_assets.py` – the player's input actions and mapping context (`/Game/AlienMuseum/Input`) |
 | Source art | `SourceArt/` (not in git): `Downloaded/` (unzipped downloads), `Converted/` (`.glb`, previews, `manifest.json`, `poses.json`) |
 
 ## Build
@@ -102,6 +102,14 @@ Controls on the headset: point + **trigger / pinch** to select, **grip** (hands:
 pinch on a chamber to carry it, both hands to scale/rotate, thumbstick while carrying to rotate/resize,
 **X / Y / B / Menu** (or left-hand pinch-and-hold 1 s) to open the collection. With hand tracking a
 closed fist grabs (cases and aliens) and a pinch points and selects.
+
+**Controller input on Quest.** The OpenXR runtime only delivers the Touch controllers' triggers, grips,
+sticks and buttons to input actions whose mapping context is listed in `Config/DefaultInput.ini` →
+Default Mapping Contexts *and* already loaded when the XR session starts; a mapping context made at run
+time never receives them (only hand tracking, which the game reads itself, would work). So the actions
+are assets in `/Game/AlienMuseum/Input` (`IMC_Museum` + `IA_Museum_*`, made by
+`Scripts/create_input_assets.py`), `IMC_Museum` is registered there, and `AMuseumPawn` loads them in its
+constructor. To change a key, edit `MAPPINGS` in the script and re-run it.
 
 **Holding an alien (like a pet).** Point at an alien (a gold ring appears at its feet and the laser turns
 gold) and squeeze the **grip** - or reach into the case and grab it, or make a **fist** at it with hand
@@ -228,6 +236,16 @@ Sources for the moves: [Cannonbolt (Ben 10 Wiki)](https://ben10.fandom.com/wiki/
   `ModelParts` are extra meshes in the model's frame that swing around a joint (Stinkfly's wings): `Hinge`
   and `Axis` in the mesh's space, and `Amount` / `Offset` / `Speed` (degrees either side of the offset,
   beats per second) at rest and `FlyingAmount` / `FlyingOffset` / `FlyingSpeed` while flying.
+* **Rigged models** – `RiggedMesh` (a skinned copy of the model, same shape and frame) is shown instead of
+  `ModelMesh` and animated bone by bone from `Rig`: `Legs` (upper / lower / end bone, step phase, front)
+  walk with their paws planted by two-bone IK - the elbows and knees bend, a front paw folds back as it
+  swings, the body bobs and sways, and it crouches on bent legs for a leap; in the air (leaping or held
+  by the player) the legs reach out and paddle. `Spine` breathes (pants when excited), `Neck` / `Head`
+  look around and nod with the steps, `Jaw` pants and snarls, `bSniffs` lifts the nose to sniff now and
+  then, `Tail` waves (`TailAmount`, `TailSpeed`), `Floating` bones drift. `StrideLength` / `StepHeight`
+  in model heights. Wildmutt walks on all fours this way and Ghostfreak's tail waves; the settings live
+  in `RIGS` in `Scripts/import_downloaded_models.py`. Console `Museum.RigTestSpeed 14` makes rigged
+  aliens step on the spot as if walking at 14 cm/s (for checking the gait; 0 = off).
 * **Moves** – on any alien data asset: `Habitat`, `SignatureActions`, `ActionChance`, `ActionColor`,
   `bHeadFlames`, `bSpeedTrail`, `PoseMesh` (a second pose of the model shown during Flex) and `BallMesh`
   (the rolled-up form for Roll). `Scripts/create_habitats_and_moves.py` sets them all.
@@ -262,14 +280,21 @@ Cannonbolt with his ball form) go through these scripts, in this order:
    to its display height and writes `SourceArt/Converted/<Id>.glb` plus a front/side preview `.png`.
    Moving parts (`parts`: Stinkfly's wings) are kept out of the model and written per side as
    `<Id>_WingL.glb` / `<Id>_WingR.glb` in the same frame, with the joint each swings around (the middle
-   and direction of the wing's base) in `manifest.json`.
+   and direction of the wing's base) in `manifest.json`. Rigged models (`rigged`: Wildmutt, Ghostfreak)
+   keep their skeleton: the stance set up with `pose` and `ik` (two-bone IK - Wildmutt's front paws are
+   planted on the ground under his shoulders) becomes the rig's rest pose, meshes that only followed a bone
+   get skinned to it, unused tip bones are dropped, and `<Id>_Rig.glb` (skinned) is written next to the
+   static `<Id>.glb`.
    ```
    & "C:\Program Files\Blender Foundation\Blender 5.2\blender.exe" -b --factory-startup --python Scripts\blender_convert_models.py -- SourceArt\Downloaded SourceArt\Converted [Id ...]
    ```
 2. **Unreal** (editor closed) – `Scripts/import_downloaded_models.py` imports every `.glb` fresh into
    `/Game/AlienMuseum/Models/<Id>/` (Interchange; no Nanite, no collision, turned to face +X) with its
-   moving parts (`PART_MOTION` sets how they swing), creates the `DA_Model_*` assets and
-   `DA_AlienCollection_Models`, and makes it the museum's collection.
+   moving parts (`PART_MOTION` sets how they swing) and a rigged model's skeletal mesh (`<Id>_Rig/`, using
+   the static model's materials, which are flagged *Used with Skeletal Mesh* - without it they render as
+   the default grey material), creates the `DA_Model_*` assets (`RIGS` fills in their `Rig`) and
+   `DA_AlienCollection_Models`, and makes it the museum's collection. Models in `RETIRED` (taken out of
+   the museum: Four Arms 2, Cannonbolt 2 and 3, Upgrade 2) have their assets deleted.
    ```
    & "C:\Program Files\Epic Games\UE_5.7\Engine\Binaries\Win64\UnrealEditor-Cmd.exe" C:\Games\Ben10\Ben10.uproject -run=pythonscript -script="C:/Games/Ben10/Scripts/import_downloaded_models.py" -unattended -nosplash -nullrhi
    ```
@@ -290,9 +315,10 @@ Cannonbolt with his ball form) go through these scripts, in this order:
 
 **Adding another download:** unzip it into `SourceArt/Downloaded/<name>/`, run
 `Scripts/blender_inspect_models.py` to see its size, rig, textures and a preview, add a line to `MODELS`
-(id, alien name, height, `rotate` if it lies down or faces sideways, `pose` for T-pose arms, `folder` /
-`file` for a download with several models, `colors` for materials that are just flat colours, `parts` for
-a mirrored pair of moving meshes such as wings), convert
+(id, alien name, height, `rotate` if it lies down or faces sideways, `pose` for T-pose arms or a tail that
+hangs below the feet (`(degrees, "raise")`), `folder` / `file` for a download with several models, `colors`
+for materials that are just flat colours, `parts` for a mirrored pair of moving meshes such as wings,
+`rigged` + `ik` to keep the skeleton and animate it), convert
 it, add its id to `ORDER` in the import script (and to `EXTRA` if it is a new alien), run the import, add
 the alien to `MOVES` in `create_habitats_and_moves.py` and run that too.
 
@@ -301,7 +327,8 @@ the alien to `MOVES` in `create_habitats_and_moves.py` and run that too.
 Forward shading, multiview, 4× MSAA, dynamic foveation (level High), no Lumen / VSM / ray tracing /
 distance fields / Substrate, ASTC-only textures, no dynamic shadows (fake contact shadows), unlit
 emissive "lighting" inside chambers, pillars instanced, alien AI thinks at 5 Hz, alien animation only
-when visible, max 8 chambers. Imported models: static meshes (no skeletal animation), ≤ 60 000 triangles
+when visible, max 8 chambers. Imported models: static meshes, except the rigged Wildmutt and Ghostfreak
+(skinned meshes with 53 / 44 bones posed in C++ on the game thread, no animation blueprint), ≤ 60 000 triangles
 each (8 cases ≈ 480 000 at most), power-of-two textures ≤ 2048, no Nanite, no collision, no shadow casting;
 one movable key light without shadows. Habitats: fixed props instanced (one draw call per kind), about
 3–10 loose physics props per case (asleep when still), ambient effects as one instanced mesh, animated
@@ -319,9 +346,11 @@ only while the case is seen. Moves: pooled effects (≤ 40 per alien), 3 after-i
   *MSVC v14.44 (17.14)* component is recommended.
 * Features that can only be verified on the headset: passthrough, room loading, occluders, anchors,
   hand tracking and pinch. Everything else was tested in Play-In-Editor.
-* The models are rigid static meshes: moves bend, squash, lean, hide or swap the whole body (Four Arms
-  swaps to his flex pose, Cannonbolt to his ball); apart from Stinkfly's wings, limbs are not animated.
-  Only FourArms_2 (the T-pose download) has a flex pose; FourArms_1 flexes with the pump and stomp only.
+* Most models are rigid static meshes: moves bend, squash, lean, hide or swap the whole body (Cannonbolt
+  swaps to his ball); their limbs don't move. Stinkfly's wings flap, and Wildmutt and Ghostfreak are
+  rigged (legs, spine, head, jaw, tail). Four Arms (1) flexes with the pump and stomp only.
+* Four Arms (2), Cannonbolt (2), Cannonbolt (3) and Upgrade (2) were taken out of the museum (`RETIRED`).
+  A saved case that held one of them comes back empty.
 * Heatblast was taken out of the museum (no model was downloaded for him). A saved case that held him
   comes back empty; remove it with its red X or put another alien in. His head flames would attach to a
   future Heatblast model automatically.

@@ -9,6 +9,7 @@
 #include "Core/MuseumInteractable.h"
 #include "MR/MuseumSceneComponent.h"
 #include "Data/AlienDataAsset.h"
+#include "UI/AlienCollectionPanel.h"
 #include "Ben10.h"
 #include "Camera/CameraComponent.h"
 #include "Components/CapsuleComponent.h"
@@ -94,6 +95,31 @@ AMuseumPawn::AMuseumPawn()
 
 	LeftHand = CreateDefaultSubobject<UMuseumHandInteractor>(TEXT("LeftHand"));
 	RightHand = CreateDefaultSubobject<UMuseumHandInteractor>(TEXT("RightHand"));
+
+	// Input as assets (Scripts/create_input_assets.py): on Quest the OpenXR runtime only feeds the
+	// Touch controllers' triggers, grips, sticks and buttons to actions of a mapping context that is
+	// listed in DefaultInput.ini's Default Mapping Contexts and already loaded when the XR session
+	// starts - loading them here (class default object, at start-up) guarantees both.
+	static ConstructorHelpers::FObjectFinder<UInputMappingContext> MappingAsset(TEXT("/Game/AlienMuseum/Input/IMC_Museum.IMC_Museum"));
+	static ConstructorHelpers::FObjectFinder<UInputAction> SelectLeftAsset(TEXT("/Game/AlienMuseum/Input/IA_Museum_SelectLeft.IA_Museum_SelectLeft"));
+	static ConstructorHelpers::FObjectFinder<UInputAction> SelectRightAsset(TEXT("/Game/AlienMuseum/Input/IA_Museum_SelectRight.IA_Museum_SelectRight"));
+	static ConstructorHelpers::FObjectFinder<UInputAction> GrabLeftAsset(TEXT("/Game/AlienMuseum/Input/IA_Museum_GrabLeft.IA_Museum_GrabLeft"));
+	static ConstructorHelpers::FObjectFinder<UInputAction> GrabRightAsset(TEXT("/Game/AlienMuseum/Input/IA_Museum_GrabRight.IA_Museum_GrabRight"));
+	static ConstructorHelpers::FObjectFinder<UInputAction> MenuAsset(TEXT("/Game/AlienMuseum/Input/IA_Museum_Menu.IA_Museum_Menu"));
+	static ConstructorHelpers::FObjectFinder<UInputAction> RemoveAsset(TEXT("/Game/AlienMuseum/Input/IA_Museum_Remove.IA_Museum_Remove"));
+	static ConstructorHelpers::FObjectFinder<UInputAction> AdjustAsset(TEXT("/Game/AlienMuseum/Input/IA_Museum_Adjust.IA_Museum_Adjust"));
+	static ConstructorHelpers::FObjectFinder<UInputAction> LookAsset(TEXT("/Game/AlienMuseum/Input/IA_Museum_Look.IA_Museum_Look"));
+	static ConstructorHelpers::FObjectFinder<UInputAction> MoveAsset(TEXT("/Game/AlienMuseum/Input/IA_Museum_Move.IA_Museum_Move"));
+	InputMapping = MappingAsset.Object;
+	SelectLeftAction = SelectLeftAsset.Object;
+	SelectRightAction = SelectRightAsset.Object;
+	GrabLeftAction = GrabLeftAsset.Object;
+	GrabRightAction = GrabRightAsset.Object;
+	MenuAction = MenuAsset.Object;
+	RemoveAction = RemoveAsset.Object;
+	AdjustAction = AdjustAsset.Object;
+	LookAction = LookAsset.Object;
+	MoveAction = MoveAsset.Object;
 }
 
 void AMuseumPawn::BeginPlay()
@@ -174,9 +200,12 @@ void AMuseumPawn::CreateDefaultInput()
 
 	if (InputMapping)
 	{
-		return; // a designer-made mapping context was assigned
+		return; // the input assets (or a designer-made mapping context) are assigned
 	}
 
+	// Fallback when the assets are missing: fine for desktop testing, but on Quest the controllers
+	// never reach a mapping context made at run time (only hand tracking would work).
+	UE_LOG(LogAlienMuseum, Warning, TEXT("IMC_Museum not found - building the input mapping at run time; Touch controller input will not work in VR (run Scripts/create_input_assets.py)"));
 	UInputMappingContext* Mapping = NewObject<UInputMappingContext>(this, TEXT("IMC_Museum_Default"));
 	InputMapping = Mapping;
 
@@ -303,6 +332,8 @@ void AMuseumPawn::OnMenu(const FInputActionValue&)
 	if (AMuseumDirector* Director = GetDirector())
 	{
 		Director->ToggleCollectionPanel();
+		UE_LOG(LogAlienMuseum, Log, TEXT("Menu button: collection %s"),
+			Director->GetPanel() && Director->GetPanel()->IsPanelVisible() ? TEXT("shown") : TEXT("hidden"));
 	}
 }
 

@@ -16,6 +16,7 @@
 
 class AAlienCharacter;
 class UStaticMesh;
+class USkeletalMesh;
 class UChamberHabitatAsset;
 
 /** Signature move an alien performs now and then, and to show off to a visitor (UAlienActionComponent). */
@@ -205,6 +206,87 @@ struct BEN10_API FAlienModelPart
 	float Phase = 0.f;
 };
 
+/** One leg of a rigged model: three bones from the body down to the paw that is planted on the ground. */
+USTRUCT(BlueprintType)
+struct BEN10_API FAlienRigLeg
+{
+	GENERATED_BODY()
+
+	/** Shoulder / hip. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rig")
+	FName Upper;
+
+	/** Elbow / knee: bends the way it bends in the model's rest pose. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rig")
+	FName Lower;
+
+	/** Wrist / ankle: stays where it is put down while the leg carries the body (IK). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rig")
+	FName End;
+
+	/** When this leg lifts, 0..1 of the step cycle (a walk: left hind 0, left fore 0.25, right hind 0.5, right fore 0.75). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rig")
+	float Phase = 0.f;
+
+	/** Front legs fold the paw back while it swings forward. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rig")
+	bool bFront = false;
+};
+
+/**
+ * How a rigged model moves bone by bone (UAlienAppearanceComponent): which bones walk, breathe, look
+ * around and wag. Every part is optional; bone names come from the model's skeleton.
+ */
+USTRUCT(BlueprintType)
+struct BEN10_API FAlienRig
+{
+	GENERATED_BODY()
+
+	/** Legs that walk: the paws are planted on the ground and step in turn (a four-legged walk). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rig")
+	TArray<FAlienRigLeg> Legs;
+
+	/** Pelvis to chest. The first bone carries the body: it bobs with the steps and lowers to crouch. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rig")
+	TArray<FName> Spine;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rig")
+	FName Neck;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rig")
+	FName Head;
+
+	/** Opens a little to pant, wide to snarl when excited. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rig")
+	FName Jaw;
+
+	/** Tail bones, root first: a wave runs down them to the tip. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rig")
+	TArray<FName> Tail;
+
+	/** Bones that drift slowly with their children (a ghost's arms). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rig")
+	TArray<FName> Floating;
+
+	/** Stride at full walking speed and how high a paw lifts, in heights of the model. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rig")
+	float StrideLength = 0.3f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rig")
+	float StepHeight = 0.07f;
+
+	/** Degrees the tail tip swings (the root less), and waves per second. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rig")
+	float TailAmount = 14.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rig")
+	float TailSpeed = 0.6f;
+
+	/** Lifts its nose and sniffs the air now and then (Wildmutt has no eyes). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rig")
+	bool bSniffs = false;
+};
+
 UCLASS(BlueprintType)
 class BEN10_API UAlienDataAsset : public UPrimaryDataAsset
 {
@@ -255,6 +337,17 @@ public:
 	/** Pieces of the model that move on their own (Stinkfly's wings). */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Model")
 	TArray<FAlienModelPart> ModelParts;
+
+	/**
+	 * Optional skinned version of ModelMesh - the same shape in the same frame (blender_convert_models.py
+	 * `rigged`). When set it is shown instead, and Rig animates its bones: walking legs with planted paws,
+	 * breathing, looking around, a wagging tail. ModelMesh still sets the size and makes the after-images.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Model")
+	TSoftObjectPtr<USkeletalMesh> RiggedMesh;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Model")
+	FAlienRig Rig;
 
 	bool HasModel() const { return !ModelMesh.IsNull(); }
 

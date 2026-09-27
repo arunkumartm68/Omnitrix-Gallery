@@ -2228,7 +2228,7 @@ void UAlienActionComponent::UpdateFootsteps(float Dt)
 void UAlienActionComponent::SpawnAfterImage(float Opacity, float Life)
 {
 	UStaticMeshComponent* Model = Body ? Body->GetModelComponent() : nullptr;
-	if (!Model || !Model->GetStaticMesh() || !Model->IsVisible())
+	if (!Model || !Model->GetStaticMesh() || !Body->IsBodyVisible()) // a rigged model's static twin is hidden but placed
 	{
 		return;
 	}

@@ -7,11 +7,13 @@ and the models belong to their Sketchfab authors. Keep this build private; do no
 Input: SourceArt/Converted/*.glb + manifest.json, written by Scripts/blender_convert_models.py.
 For every model this script:
   1. imports the .glb into /Game/AlienMuseum/Models/<Id>/ (one static mesh + its materials/textures;
-     no Nanite, no collision - Quest cannot use Nanite and the alien uses its capsule), and its
-     moving parts (Stinkfly's wings) into /Game/AlienMuseum/Models/<Id>_<Part><Side>/,
+     no Nanite, no collision - Quest cannot use Nanite and the alien uses its capsule), its moving
+     parts (Stinkfly's wings) into /Game/AlienMuseum/Models/<Id>_<Part><Side>/ and a rigged model's
+     skinned copy (<Id>_Rig.glb: Wildmutt, Ghostfreak) into /Game/AlienMuseum/Models/<Id>_Rig/,
   2. creates / updates /Game/AlienMuseum/Data/Models/DA_Model_<Id> (identity, height, behaviour,
      moving parts with their joints and how they swing),
-  3. puts them all in DA_AlienCollection_Models and makes that the museum's collection.
+  3. puts them all in DA_AlienCollection_Models and makes that the museum's collection, and deletes
+     the assets of models taken out of the museum (RETIRED).
 Re-running updates everything in place. Afterwards run create_habitats_and_moves.py (habitats,
 signature moves and speeds live there and are reset here).
 
@@ -33,10 +35,13 @@ CLASSIC_FOLDER = "/Game/AlienMuseum/Data/Classic"
 COLLECTION_NAME = "DA_AlienCollection_Models"
 
 # Collection order (the first one fills the starter chamber on a fresh install).
-ORDER = ["FourArms_1", "FourArms_2", "XLR8_1", "XLR8_2", "Diamondhead_1", "Diamondhead_2",
-         "Upgrade_1", "Upgrade_2", "Ghostfreak", "Ripjaws", "Wildmutt", "GreyMatter",
-         "Cannonbolt_1", "Cannonbolt_2", "Cannonbolt_3", "Wildvine", "Upchuck", "Ditto", "EchoEcho",
-         "Stinkfly"]
+ORDER = ["FourArms_1", "XLR8_1", "XLR8_2", "Diamondhead_1", "Diamondhead_2",
+         "Upgrade_1", "Ghostfreak", "Ripjaws", "Wildmutt", "GreyMatter",
+         "Cannonbolt_1", "Wildvine", "Upchuck", "Ditto", "EchoEcho", "Stinkfly"]
+
+# Taken out of the museum by the owner (the downloads stay in SourceArt; add an id back to ORDER to
+# bring it back). Their imported assets are deleted, so they are not cooked into the app.
+RETIRED = ["FourArms_2", "Cannonbolt_2", "Cannonbolt_3", "Upgrade_2"]
 
 # The classic ten already have identity text and a chamber colour.
 CLASSIC_ASSETS = {
@@ -66,6 +71,28 @@ HOVERS = {"Ghostfreak", "Stinkfly"}
 # buzz while he hovers, big fast strokes when he flies, moves or is held.
 PART_MOTION = {
     "Wing": dict(amount=15.0, offset=17.0, speed=6.0, flying_amount=32.0, flying_offset=34.0, flying_speed=12.0),
+}
+
+# How a rigged model's bones move (AlienRig; bone names from the model's skeleton).
+# legs: (upper, lower, end, phase in the step cycle, front leg). A four-legged walk steps left hind,
+# left fore, right hind, right fore - a quarter of the cycle apart.
+RIGS = {
+    # Wildmutt walks on all fours like the classic cartoon: elbows bending, paws planted, the head low,
+    # sniffing the air (he has no eyes) and panting / snarling when excited.
+    "Wildmutt": dict(
+        legs=[("bip_hip_L", "bip_knee_L", "bip_foot_L", 0.0, False),
+              ("bip_upperArm_L", "bip_lowerArm_L", "bip_hand_L", 0.25, True),
+              ("bip_hip_R", "bip_knee_R", "bip_foot_R", 0.5, False),
+              ("bip_upperArm_R", "bip_lowerArm_R", "bip_hand_R", 0.75, True)],
+        spine=["bip_pelvis", "bip_spine_0", "bip_spine_1", "bip_spine_2"],
+        neck="bip_neck", head="bip_head", jaw="bip_Jaw",
+        stride_length=0.3, step_height=0.1, sniffs=True),
+    # Ghostfreak's ghostly tail waves all the time; his long arms drift.
+    "Ghostfreak": dict(
+        spine=["bip_pelvis", "bip_spine_0", "bip_spine_1"], neck="bip_neck", head="bip_head",
+        tail=[f"bip_tail_{i}" for i in range(8)],
+        floating=["bip_upperArm_L", "bip_lowerArm_L", "bip_upperArm_R", "bip_lowerArm_R"],
+        tail_amount=16.0, tail_speed=0.7),
 }
 
 AT = unreal.AssetToolsHelpers.get_asset_tools()
@@ -158,6 +185,114 @@ def share_materials(mesh, source_mesh):
     print(f"{mesh.get_name()} uses", [m.get_path_name() if m else None for m in used])
 
 
+def import_rigged(entry, static_mesh):
+    """Imports a rigged model's skinned copy (<Id>_Rig.glb) as a skeletal mesh with its skeleton into
+    Models/<Id>_Rig, using the static model's materials. Returns the SkeletalMesh."""
+    dest = f"{MODEL_ROOT}/{entry['id']}_Rig"
+    unreal.SystemLibrary.execute_console_command(None, "Interchange.FeatureFlags.Import.SyncToBrowser 0")
+    if EAL.does_directory_exist(dest):
+        EAL.delete_directory(dest)
+    pipeline = unreal.InterchangeGenericAssetsPipeline()
+    pipeline.set_editor_property("import_offset_rotation", unreal.Rotator(roll=0.0, pitch=0.0, yaw=-90.0))  # faces +X, like the static one
+    mesh = pipeline.get_editor_property("mesh_pipeline")
+    mesh.set_editor_property("import_static_meshes", False)
+    mesh.set_editor_property("import_skeletal_meshes", True)
+    mesh.set_editor_property("import_morph_targets", False)
+    mesh.set_editor_property("create_physics_asset", False)
+    pipeline.get_editor_property("animation_pipeline").set_editor_property("import_animations", False)
+    pipeline.get_editor_property("material_pipeline").set_editor_property(
+        "search_location", unreal.InterchangeMaterialSearchLocation.DO_NOT_SEARCH)
+    skeletal_type = getattr(unreal.InterchangeForceMeshType, "IFMT_SKELETAL_MESH", None)
+    if skeletal_type is not None:
+        pipeline.get_editor_property("common_meshes_properties").set_editor_property("force_all_mesh_as_type", skeletal_type)
+    stack = unreal.InterchangePipelineStackOverride()
+    stack.add_pipeline(pipeline)
+    task = unreal.AssetImportTask()
+    task.set_editor_property("filename", entry["rig_glb"])
+    task.set_editor_property("destination_path", dest)
+    task.set_editor_property("automated", True)
+    task.set_editor_property("replace_existing", True)
+    task.set_editor_property("save", True)
+    task.set_editor_property("options", stack)
+    AT.import_asset_tasks([task])
+
+    skeletal = None
+    for path in EAL.list_assets(dest, recursive=True, include_folder=False):
+        asset = unreal.load_asset(path)
+        if isinstance(asset, unreal.SkeletalMesh):
+            skeletal = asset
+    if skeletal is None:
+        raise RuntimeError(f"no skeletal mesh imported for {entry['id']}")
+    # Same model: the static mesh's materials (matched by slot name), the imported copies deleted.
+    by_name = {}
+    for slot in static_mesh.get_editor_property("static_materials"):
+        by_name[str(slot.get_editor_property("material_slot_name"))] = slot.get_editor_property("material_interface")
+    fallback = static_mesh.get_material(0)
+    materials = []  # iterating the property's array hands out copies: collect the edited ones
+    for slot in skeletal.get_editor_property("materials"):
+        slot.set_editor_property("material_interface", by_name.get(str(slot.get_editor_property("material_slot_name")), fallback))
+        materials.append(slot)
+    skeletal.set_editor_property("materials", materials)
+    EAL.save_loaded_asset(skeletal)
+    # A material drawn on a skinned mesh must say so, or it renders as the default grey material
+    # (and a cooked build never compiles the skinned version).
+    for slot in materials:
+        material = slot.get_editor_property("material_interface")
+        base = material.get_base_material() if material else None
+        if base and not base.get_editor_property("used_with_skeletal_mesh"):
+            base.set_editor_property("used_with_skeletal_mesh", True)
+            unreal.MaterialEditingLibrary.recompile_material(base)
+            EAL.save_loaded_asset(base)
+    for path in EAL.list_assets(dest, recursive=True, include_folder=False):
+        asset = unreal.load_asset(path)
+        if isinstance(asset, (unreal.MaterialInterface, unreal.Texture, unreal.PhysicsAsset)):
+            EAL.delete_asset(path)
+    skeleton = skeletal.get_editor_property("skeleton")
+    bounds = skeletal.get_bounds()
+    print(f"RIG {entry['id']}: {skeletal.get_path_name()} bones={len(skeleton.get_editor_property('bone_tree')) if skeleton else '?'} "
+          f"bounds origin={bounds.origin} extent={bounds.box_extent} (static {static_mesh.get_bounding_box()})")
+    return skeletal
+
+
+def make_rig(model_id):
+    """AlienRig for a rigged model from RIGS (an empty rig otherwise)."""
+    spec = RIGS.get(model_id, {})
+    rig = unreal.AlienRig()
+    legs = []
+    for upper, lower, end, phase, front in spec.get("legs", []):
+        leg = unreal.AlienRigLeg()
+        leg.set_editor_property("upper", upper)
+        leg.set_editor_property("lower", lower)
+        leg.set_editor_property("end", end)
+        leg.set_editor_property("phase", phase)
+        leg.set_editor_property("front", front)
+        legs.append(leg)
+    rig.set_editor_property("legs", legs)
+    for key in ("spine", "tail", "floating"):
+        rig.set_editor_property(key, [unreal.Name(n) for n in spec.get(key, [])])
+    for key in ("neck", "head", "jaw"):
+        rig.set_editor_property(key, unreal.Name(spec.get(key, "None")))
+    for key in ("stride_length", "step_height", "tail_amount", "tail_speed", "sniffs"):
+        if key in spec:
+            rig.set_editor_property(key, spec[key])
+    return rig
+
+
+def delete_retired():
+    """Deletes the assets of models taken out of the museum (their data asset, meshes and poses)."""
+    for model_id in RETIRED:
+        folders = [f.rstrip("/") for f in EAL.list_assets(MODEL_ROOT, recursive=False, include_folder=True)
+                   if f.rstrip("/").split("/")[-1] == model_id or f.rstrip("/").split("/")[-1].startswith(model_id + "_")]
+        data = f"{DATA_FOLDER}/DA_Model_{model_id}"
+        if EAL.does_asset_exist(data):
+            EAL.delete_asset(data)
+            print("RETIRED", data)
+        for folder in folders:
+            if EAL.does_directory_exist(folder):
+                EAL.delete_directory(folder)
+                print("RETIRED", folder)
+
+
 def import_parts(entry):
     """Imports a model's moving parts (one mesh per side, in the model's frame). Returns AlienModelParts."""
     parts = []
@@ -192,7 +327,7 @@ def identity_for(alien):
             unreal.LinearColor(*extra["chamber"], 1.0))
 
 
-def build_alien(entry, mesh, display_name, parts=()):
+def build_alien(entry, mesh, display_name, parts=(), rigged=None):
     da = load_or_create(DATA_FOLDER, f"DA_Model_{entry['id']}", unreal.AlienDataAsset)
     species, planet, desc, chamber = identity_for(entry["alien"])
     da.set_editor_property("alien_id", unreal.Name(f"Model_{entry['id']}"))
@@ -202,6 +337,8 @@ def build_alien(entry, mesh, display_name, parts=()):
     da.set_editor_property("description", desc)
     da.set_editor_property("model_mesh", mesh)
     da.set_editor_property("model_parts", list(parts))
+    da.set_editor_property("rigged_mesh", rigged)
+    da.set_editor_property("rig", make_rig(entry["id"]) if rigged else unreal.AlienRig())
     da.set_editor_property("model_rotation", unreal.Rotator(0.0, 0.0, 0.0))
     da.set_editor_property("model_credit", unreal.Text(f"Model: {entry['source_folder']} (Sketchfab download)"))
     da.set_editor_property("height", float(entry["height_cm"]))
@@ -249,8 +386,14 @@ def main(only=()):
             EAL.save_loaded_asset(da)
             assets.append(da)
             continue
+        # The old skinned copy goes first: it uses the static model's materials, and deleting it after
+        # they were replaced makes the engine load a mesh whose materials are gone (it asserts).
+        rig_folder = f"{MODEL_ROOT}/{model_id}_Rig"
+        if EAL.does_directory_exist(rig_folder):
+            EAL.delete_directory(rig_folder)
         mesh = import_model(entry)
-        da = build_alien(entry, mesh, display, import_parts(entry))
+        rigged = import_rigged(entry, mesh) if entry.get("rig_glb") else None
+        da = build_alien(entry, mesh, display, import_parts(entry), rigged)
         assets.append(da)
         folder = f"{MODEL_ROOT}/{model_id}"
         textures = [p for p in EAL.list_assets(folder, recursive=True, include_folder=False)
@@ -263,6 +406,7 @@ def main(only=()):
     collection = load_or_create(DATA_FOLDER, COLLECTION_NAME, unreal.AlienCollectionAsset)
     collection.set_editor_property("aliens", assets)
     EAL.save_loaded_asset(collection)
+    delete_retired()  # now that the collection no longer holds them
 
     # The museum now shows the downloaded models (the classic / original collections stay available).
     director_bp = unreal.load_asset("/Game/AlienMuseum/Blueprints/BP_MuseumDirector")

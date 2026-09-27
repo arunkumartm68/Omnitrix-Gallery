@@ -227,6 +227,10 @@ void AMuseumDirector::PreloadAlienAssets()
 				Paths.AddUnique(Part.Mesh.ToSoftObjectPath()); // Stinkfly's wings
 			}
 		}
+		if (!Alien->RiggedMesh.IsNull())
+		{
+			Paths.AddUnique(Alien->RiggedMesh.ToSoftObjectPath()); // Wildmutt, Ghostfreak
+		}
 	}
 	if (Paths.Num() == 0)
 	{
