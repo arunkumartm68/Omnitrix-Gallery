@@ -1,6 +1,7 @@
 // Alien Museum - an autonomous alien that lives inside an AAlienChamber.
 //
-// Data (UAlienDataAsset) -> AAlienCharacter (body + movement) -> AAlienAIController (decisions).
+// Data (UAlienDataAsset) -> AAlienCharacter (body + movement) -> AAlienAIController (decisions),
+// with UAlienActionComponent for the signature moves (Cannonbolt's roll, XLR8's dash...).
 // Movement uses the CharacterMovementComponent with direct steering towards points picked inside
 // the chamber, so no navmesh is needed. That matters because chambers move at runtime and
 // rebuilding navigation on Quest would be expensive.
@@ -13,6 +14,7 @@
 
 class UAlienDataAsset;
 class UAlienAppearanceComponent;
+class UAlienActionComponent;
 class UStaticMeshComponent;
 class AAlienChamber;
 
@@ -33,6 +35,12 @@ public:
 
 	UFUNCTION(BlueprintPure, Category = "Alien")
 	AAlienChamber* GetHomeChamber() const { return HomeChamber.Get(); }
+
+	UFUNCTION(BlueprintPure, Category = "Alien")
+	UAlienAppearanceComponent* GetAppearance() const { return Appearance; }
+
+	UFUNCTION(BlueprintPure, Category = "Alien")
+	UAlienActionComponent* GetActions() const { return Actions; }
 
 	// ---- Movement API used by AAlienAIController ----
 
@@ -63,6 +71,15 @@ public:
 	/** Current size relative to the data asset (follows the chamber scale). */
 	float GetScaleFactor() const;
 
+	/** Multiplies walking speed, acceleration and turn rate (rolls, dashes...). 1 = normal. */
+	void SetSpeedMultiplier(float Multiplier);
+
+	/** How hard the alien shoves the loose props it bumps into. 1 = normal. */
+	void SetPushStrength(float Multiplier);
+
+	/** Shrinks the contact shadow (1 = normal), e.g. while flying high above it. */
+	void SetContactShadowScale(float Factor);
+
 	virtual void Tick(float DeltaSeconds) override;
 
 protected:
@@ -70,6 +87,10 @@ protected:
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Alien")
 	TObjectPtr<UAlienAppearanceComponent> Appearance;
+
+	/** Signature moves and their effects. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Alien")
+	TObjectPtr<UAlienActionComponent> Actions;
 
 	/** Cheap fake contact shadow: a soft dark disc under the feet (no dynamic shadows on Quest). */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Alien")
@@ -105,4 +126,6 @@ private:
 	bool bIsHeld = false;
 	bool bAppearanceBuilt = false;
 	float ContainmentTimer = 0.f;
+	float SpeedMultiplier = 1.f;
+	FVector ContactShadowScale = FVector(0.2f);
 };

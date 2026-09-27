@@ -10,11 +10,12 @@ For every model this script:
      no Nanite, no collision - Quest cannot use Nanite and the alien uses its capsule),
   2. creates / updates /Game/AlienMuseum/Data/Models/DA_Model_<Id> (identity, height, behaviour),
   3. puts them all in DA_AlienCollection_Models and makes that the museum's collection.
-Re-running updates everything in place.
+Re-running updates everything in place. Afterwards run create_habitats_and_moves.py (habitats,
+signature moves and speeds live there and are reset here).
 
-Run headless (editor closed):
+Run headless (editor closed); list model ids after the script to import only those:
     UnrealEditor-Cmd.exe C:/Games/Ben10/Ben10.uproject -run=pythonscript
-        -script="C:/Games/Ben10/Scripts/import_downloaded_models.py" -unattended -nosplash -nullrhi
+        -script="C:/Games/Ben10/Scripts/import_downloaded_models.py [Cannonbolt_3 Stinkfly]" -unattended -nosplash -nullrhi
 or in the editor's Python console:
     exec(open(r"C:/Games/Ben10/Scripts/import_downloaded_models.py").read())
 """
@@ -32,13 +33,14 @@ COLLECTION_NAME = "DA_AlienCollection_Models"
 # Collection order (the first one fills the starter chamber on a fresh install).
 ORDER = ["FourArms_1", "FourArms_2", "XLR8_1", "XLR8_2", "Diamondhead_1", "Diamondhead_2",
          "Upgrade_1", "Upgrade_2", "Ghostfreak", "Ripjaws", "Wildmutt", "GreyMatter",
-         "Cannonbolt_1", "Cannonbolt_2", "Wildvine", "Upchuck", "Ditto", "EchoEcho"]
+         "Cannonbolt_1", "Cannonbolt_2", "Cannonbolt_3", "Wildvine", "Upchuck", "Ditto", "EchoEcho",
+         "Stinkfly"]
 
 # The classic ten already have identity text and a chamber colour.
 CLASSIC_ASSETS = {
     "Four Arms": "DA_Classic_FourArms", "XLR8": "DA_Classic_XLR8", "Diamondhead": "DA_Classic_Diamondhead",
     "Upgrade": "DA_Classic_Upgrade", "Ghostfreak": "DA_Classic_Ghostfreak", "Ripjaws": "DA_Classic_Ripjaws",
-    "Wildmutt": "DA_Classic_Wildmutt", "Grey Matter": "DA_Classic_GreyMatter",
+    "Wildmutt": "DA_Classic_Wildmutt", "Grey Matter": "DA_Classic_GreyMatter", "Stinkfly": "DA_Classic_Stinkfly",
 }
 
 # Aliens without a classic data asset.
@@ -55,7 +57,7 @@ EXTRA = {
                       desc="A living amplifier that clones itself and blasts ear-splitting sonic screams."),
 }
 
-HOVERS = {"Ghostfreak"}
+HOVERS = {"Ghostfreak", "Stinkfly"}
 
 AT = unreal.AssetToolsHelpers.get_asset_tools()
 EAL = unreal.EditorAssetLibrary
@@ -154,7 +156,8 @@ def build_alien(entry, mesh, display_name):
     return da
 
 
-def main():
+def main(only=()):
+    """Imports every model in ORDER, or only the named ids (the others keep their assets as they are)."""
     # Headless runs have no Content Browser to show the new assets in (it would crash).
     unreal.SystemLibrary.execute_console_command(None, "Interchange.FeatureFlags.Import.SyncToBrowser 0")
     with open(os.path.join(CONVERTED, "manifest.json"), encoding="utf-8") as handle:
@@ -179,6 +182,13 @@ def main():
         alien = entry["alien"]
         numbers[alien] = numbers.get(alien, 0) + 1
         display = f"{alien} ({numbers[alien]})" if counts[alien] > 1 else alien
+        existing = f"{DATA_FOLDER}/DA_Model_{model_id}"
+        if only and model_id not in only and EAL.does_asset_exist(existing):
+            da = unreal.load_asset(existing)
+            da.set_editor_property("display_name", unreal.Text(display))  # numbering may have shifted
+            EAL.save_loaded_asset(da)
+            assets.append(da)
+            continue
         mesh = import_model(entry)
         da = build_alien(entry, mesh, display)
         assets.append(da)
@@ -202,4 +212,7 @@ def main():
     print(f"MODELS DONE: {len(assets)} aliens in {collection.get_path_name()}")
 
 
-main()
+if __name__ == "__main__":  # also imported by create_habitats_and_moves.py for import_model()
+    import sys
+    main(set(sys.argv[1:]))  # e.g. -script="import_downloaded_models.py Cannonbolt_3 Stinkfly"
+

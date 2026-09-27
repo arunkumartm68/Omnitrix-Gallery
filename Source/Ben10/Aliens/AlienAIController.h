@@ -18,7 +18,8 @@ enum class EAlienState : uint8
 	Wander,
 	LookAround,
 	ReactToPlayer,
-	Held
+	Held,
+	Performing UMETA(ToolTip = "Doing one of its signature moves (UAlienActionComponent)")
 };
 
 UCLASS()

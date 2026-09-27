@@ -5,12 +5,13 @@
 //   ├── FloorGlow / LightPanel (emissive, fake interior lighting)
 //   ├── Glass (translucent, no collision)
 //   ├── Frame posts (one instanced mesh = one draw call) + TopCap
-//   ├── ContainmentWalls (4 or 8 invisible boxes + ceiling, block only pawns)
+//   ├── ContainmentWalls (4 or 8 invisible boxes + ceiling, block the alien and physics props)
 //   ├── Obstacles (optional rock + crystal the alien walks around)
+//   ├── Habitat (the occupant's home world: ground, props with physics, ambient effect)
 //   ├── MovementBounds (where the alien may walk)
 //   ├── SpawnPoint
 //   ├── SelectBox (what the pointer ray hits)
-//   ├── Resize handles (top = height, sides = width, base front = depth; shown while pointed at)
+//   ├── Resize handles (top edge = height, sides = width, base front = depth; shown while pointed at)
 //   ├── HoverGlow (anti-gravity glow under the base while floating in the air)
 //   ├── InfoRoot (holographic info panel) + SizeLabel (shown while resizing)
 //   └── InteriorLight (optional real point light, off by default for Quest performance)
@@ -43,6 +44,7 @@ class UMaterialInstanceDynamic;
 class UAlienDataAsset;
 class AAlienCharacter;
 class UStaticMesh;
+class UChamberHabitatComponent;
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnAlienChamberEvent, AAlienChamber*, Chamber);
 
@@ -128,8 +130,17 @@ public:
 	/** Where an alien with the given (world) capsule half height should be spawned. */
 	FVector GetAlienSpawnLocation(float CapsuleHalfHeight) const;
 
-	/** World Z of the surface the alien walks on. */
+	/** World Z of the surface the alien walks on (the habitat ground, if any). */
 	float GetFloorZ() const;
+
+	/** Half size of the walkable floor in chamber space (cm at scale 1; X = depth, Y = width, a round pod uses its radius). */
+	FVector2D GetWalkHalfSize() const;
+
+	/** Inside half size of the glass in chamber space (cm at scale 1). */
+	FVector2D GetGlassHalfSize() const { return FVector2D(GetInnerHalfLocal()); }
+
+	/** The occupant's home-world diorama inside the case. */
+	UChamberHabitatComponent* GetHabitat() const { return Habitat; }
 
 	// ---------- Size ----------
 
@@ -368,6 +379,9 @@ protected:
 	TObjectPtr<UStaticMeshComponent> ObstacleCrystal;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Chamber")
+	TObjectPtr<UChamberHabitatComponent> Habitat;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Chamber")
 	TObjectPtr<UBoxComponent> MovementBounds;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Chamber")
@@ -413,6 +427,15 @@ private:
 	void UpdateHandleVisuals();
 	void RefreshSizeLabel();
 	void FaceViewer(USceneComponent* Component, float DeltaSeconds, bool bInstant = false) const;
+
+	/** Puts the height handle on the top edge nearest to the viewer. */
+	void AimHeightHandle();
+
+	/** Refits the occupant's habitat to the current size. */
+	void RebuildHabitat();
+
+	/** Tells the habitat where the occupant stands, so new props are not put on top of it. */
+	void KeepHabitatClearOfOccupant();
 
 	/** Moves the (walking) occupant along when the case moves without a hand, e.g. anchor corrections. */
 	void CarryOccupantAlong();
@@ -487,6 +510,12 @@ private:
 
 	/** Pointers currently over the chamber (both hands can hover it). */
 	int32 HoverCount = 0;
+
+	/** Handles stay (and stay pointable) this long after the pointer leaves, so it can cross a gap onto a knob. */
+	float HandleLinger = 0.f;
+
+	/** Chamber-space direction of the top edge that carries the height handle. */
+	FVector2f HeightHandleDir = FVector2f(1.f, 0.f);
 	TWeakObjectPtr<const UPrimitiveComponent> HotHandle;
 	TWeakObjectPtr<const UPrimitiveComponent> ResizeHandle;
 	EChamberResizeAxis ResizeAxis = EChamberResizeAxis::None;

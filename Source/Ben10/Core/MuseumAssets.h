@@ -27,6 +27,14 @@ namespace MuseumAssets
 	BEN10_API UMaterialInterface* BlobShadowMaterial();
 	BEN10_API UMaterialInterface* AlienTranslucentMaterial();
 
+	/** Effects and habitats (Scripts/create_museum_materials.py). */
+	BEN10_API UMaterialInterface* FXGlowMaterial();
+	BEN10_API UMaterialInterface* EnvLitMaterial();
+	BEN10_API UMaterialInterface* EnvLavaMaterial();
+	BEN10_API UMaterialInterface* EnvWaterMaterial();
+	BEN10_API UMaterialInterface* EnvMistMaterial();
+	BEN10_API UMaterialInterface* FXRingMaterial();
+
 	/** Material parameter names shared by the /Game/AlienMuseum/Materials assets. */
 	namespace Params
 	{
@@ -37,5 +45,11 @@ namespace MuseumAssets
 		inline const FName SelfIllum(TEXT("SelfIllum"));
 		inline const FName Tint(TEXT("Tint"));
 		inline const FName EdgeColor(TEXT("EdgeColor"));
+		inline const FName GlowColor(TEXT("GlowColor"));
+		inline const FName Roughness(TEXT("Roughness"));
+		inline const FName Softness(TEXT("Softness"));
+		inline const FName Tiling(TEXT("Tiling"));
+		inline const FName Thickness(TEXT("Thickness"));
+		inline const FName Fill(TEXT("Fill"));
 	}
 }

@@ -2,6 +2,7 @@
 
 #include "Aliens/AlienAIController.h"
 #include "Aliens/AlienCharacter.h"
+#include "Aliens/AlienActionComponent.h"
 #include "Chamber/AlienChamber.h"
 #include "Data/AlienDataAsset.h"
 #include "Camera/PlayerCameraManager.h"
@@ -119,12 +120,25 @@ void AAlienAIController::EnterState(EAlienState NewState)
 		Alien->StopMoving();
 		StateDuration = 0.f;
 		break;
+
+	case EAlienState::Performing:
+		StateDuration = 15.f; // safety timeout; the move normally ends long before
+		break;
 	}
 }
 
 void AAlienAIController::ChooseNextActivity()
 {
 	const UAlienDataAsset* Data = Alien ? Alien->GetAlienData() : nullptr;
+
+	// Now and then a signature move (Cannonbolt rolls, XLR8 dashes...).
+	UAlienActionComponent* Moves = Alien ? Alien->GetActions() : nullptr;
+	if (Data && Moves && Moves->HasActions() && Rng.FRand() < Data->ActionChance && Moves->StartRandomAction(false))
+	{
+		EnterState(EAlienState::Performing);
+		return;
+	}
+
 	const float LookChance = Data ? Data->LookAroundChance : 0.35f;
 	EnterState(Rng.FRand() < LookChance ? EAlienState::LookAround : EAlienState::Wander);
 }
@@ -139,12 +153,28 @@ void AAlienAIController::Think()
 	const UAlienDataAsset* Data = Alien->GetAlienData();
 	AAlienChamber* Chamber = Alien->GetHomeChamber();
 	const float Scale = Alien->GetScaleFactor();
+	UAlienActionComponent* Moves = Alien->GetActions();
 
 	// ---- Notice the player walking up ----
 	FVector Head;
 	const bool bHasHead = GetPlayerHead(Head);
 	const float NoticeDistance = (Data ? Data->NoticePlayerDistance : 160.f) * FMath::Max(1.f, Scale);
 	const bool bPlayerNear = bHasHead && FVector::Dist(Head, Alien->GetActorLocation()) < NoticeDistance;
+
+	// ---- A move plays out by itself ----
+	if (State == EAlienState::Performing)
+	{
+		bPlayerWasNear = bPlayerNear;
+		if (!Moves || !Moves->IsPerforming() || StateTime >= StateDuration)
+		{
+			if (Moves)
+			{
+				Moves->StopAction();
+			}
+			EnterState(EAlienState::Idle);
+		}
+		return;
+	}
 
 	if (bPlayerNear && !bPlayerWasNear && State != EAlienState::ReactToPlayer && ReactCooldownRemaining <= 0.f)
 	{
@@ -227,6 +257,12 @@ void AAlienAIController::Think()
 			{
 				Alien->StopMoving();
 				Alien->TurnToward(Head);
+				// At the glass: show off (Four Arms flexes, Cannonbolt rolls...), else a happy hop.
+				if (!bHopped && Moves && Moves->HasActions() && Moves->StartRandomAction(true))
+				{
+					EnterState(EAlienState::Performing);
+					break;
+				}
 				const float Energy = Data ? Data->Energy : 0.5f;
 				if (!bHopped || Rng.FRand() < 0.08f * Energy)
 				{
@@ -242,6 +278,7 @@ void AAlienAIController::Think()
 		break;
 
 	case EAlienState::Held:
+	case EAlienState::Performing:
 		break;
 	}
 }

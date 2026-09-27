@@ -91,7 +91,10 @@ void UAlienAppearanceComponent::ClearAppearance()
 	HeadPivot = nullptr;
 	FootL = nullptr;
 	FootR = nullptr;
+	ModelComponent = nullptr;
+	RestMesh = nullptr;
 	bIsModel = false;
+	bBodyVisible = true;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -240,6 +243,7 @@ void UAlienAppearanceComponent::BuildAppearance(const UAlienDataAsset* Data)
 		HeadPivot = AddPivot(TEXT("AlienHeadPivot"), this, FTransform(FVector(HeadBaseXY.X, HeadBaseXY.Y, HeadBaseZ + HoverHeight)));
 		ModelRadius = Data->CustomRadius * H;
 		CollisionRadius = ModelRadius;
+		HeadTopOffset = 0.1f * H; // raised by the head parts below
 	}
 	else
 	{
@@ -275,7 +279,11 @@ void UAlienAppearanceComponent::BuildModelBody(const UAlienDataAsset* Data, USta
 	const float Scale = H / MeshHeight;
 	const FVector Center = ModelBounds.GetCenter();
 	const FVector Offset(-Center.X * Scale, -Center.Y * Scale, -ModelBounds.Min.Z * Scale);
-	AddPart(TEXT("AlienModel"), Mesh, BodyPivot, FTransform(Fix, Offset, FVector(Scale)), nullptr);
+	ModelComponent = AddPart(TEXT("AlienModel"), Mesh, BodyPivot, FTransform(Fix, Offset, FVector(Scale)), nullptr);
+	RestMesh = Mesh;
+	ModelFix = Fix;
+	ModelOffset = Offset;
+	ModelScale = Scale;
 
 	const FVector Half = ModelBounds.GetExtent() * Scale;
 	ModelRadius = FMath::Max(Half.X, Half.Y);
@@ -285,6 +293,7 @@ void UAlienAppearanceComponent::BuildModelBody(const UAlienDataAsset* Data, USta
 	// A model has no separate head; the pivot only keeps the animation code uniform.
 	HeadBaseXY = FVector2D::ZeroVector;
 	HeadBaseZ = 0.85f * H;
+	HeadTopOffset = 0.11f * H;
 	HeadPivot = AddPivot(TEXT("AlienHeadPivot"), this, FTransform(FVector(0.f, 0.f, HeadBaseZ + HoverHeight)));
 }
 
@@ -332,6 +341,7 @@ void UAlienAppearanceComponent::BuildBuiltInBody(const UAlienDataAsset* Data)
 	AddPart(TEXT("AlienHead"), Sphere, HeadPivot, FTransform(FQuat::Identity, FVector(0, 0, HeadOffset), SizeToScale(HeadDiameter, HeadDiameter, HeadDiameter * 0.95f)), SkinMID);
 
 	const float HeadR = HeadDiameter * 0.5f;
+	HeadTopOffset = HeadOffset + HeadR * 0.95f;
 
 	// ---- Eyes ----
 	const int32 EyeCount = FMath::Clamp(Data->EyeCount, 0, 3);
@@ -425,6 +435,13 @@ void UAlienAppearanceComponent::AddDataPart(const FAlienBodyPart& Part, bool bMi
 	const FVector Scale = Part.Size * H / 100.f;
 	UStaticMeshComponent* Component = AddPart(TEXT("AlienPart"), GetShapeMesh(Part.Shape), Parent, FTransform(Rotation, Offset, Scale), GetPartMaterial(Part));
 
+	const bool bGlows = Part.Color == EAlienPartColor::Glow || Part.Color == EAlienPartColor::Eye
+		|| (Part.Color == EAlienPartColor::Custom && Part.bCustomGlows);
+	if (Parent == HeadPivot && !bGlows)
+	{
+		HeadTopOffset = FMath::Max(HeadTopOffset, static_cast<float>(Offset.Z) + 0.5f * static_cast<float>(Part.Size.Z) * H);
+	}
+
 	if (Part.Color == EAlienPartColor::Eye)
 	{
 		Eyes.Add(Component);
@@ -455,7 +472,8 @@ void UAlienAppearanceComponent::PlayMaterialize(float Duration)
 {
 	MaterializeDuration = FMath::Max(0.05f, Duration);
 	MaterializeTime = 0.f;
-	SetRelativeScale3D(FVector(0.05f)); // tiny but still rendered
+	MaterializeScale = 0.05f; // tiny but still rendered
+	ApplyRootTransform();
 }
 
 bool UAlienAppearanceComponent::UpdateMaterialize(float DeltaSeconds)
@@ -470,14 +488,96 @@ bool UAlienAppearanceComponent::UpdateMaterialize(float DeltaSeconds)
 	const float C1 = 1.70158f;
 	const float C3 = C1 + 1.f;
 	const float Scale = 1.f + C3 * FMath::Pow(T - 1.f, 3.f) + C1 * FMath::Pow(T - 1.f, 2.f);
-	SetRelativeScale3D(FVector(FMath::Max(0.05f, Scale)));
+	MaterializeScale = FMath::Max(0.05f, Scale);
 	if (T >= 1.f)
 	{
 		MaterializeTime = -1.f;
-		SetRelativeScale3D(FVector::OneVector);
+		MaterializeScale = 1.f;
+	}
+	ApplyRootTransform();
+	return MaterializeTime >= 0.f;
+}
+
+// ---------------------------------------------------------------------------------------------
+// Whole-body transform and poses (signature moves)
+// ---------------------------------------------------------------------------------------------
+
+void UAlienAppearanceComponent::ApplyRootTransform()
+{
+	if (!bHasBaseLocation)
+	{
+		BaseLocation = GetRelativeLocation();
+		bHasBaseLocation = true;
+	}
+	SetRelativeLocationAndRotation(BaseLocation + ActionOffset + FVector(0.f, 0.f, ExtraLift), ActionRotation);
+	SetRelativeScale3D(ActionScale * MaterializeScale);
+}
+
+void UAlienAppearanceComponent::SetBaseLocation(const FVector& Location)
+{
+	BaseLocation = Location;
+	bHasBaseLocation = true;
+	ApplyRootTransform();
+}
+
+void UAlienAppearanceComponent::SetActionTransform(const FVector& Scale, const FRotator& Rotation, const FVector& Offset)
+{
+	ActionScale = Scale.ComponentMax(FVector(0.01f));
+	ActionRotation = Rotation;
+	ActionOffset = Offset;
+	ApplyRootTransform();
+}
+
+void UAlienAppearanceComponent::SetExtraLift(float Lift)
+{
+	ExtraLift = Lift;
+	ApplyRootTransform();
+}
+
+void UAlienAppearanceComponent::SetBodyVisible(bool bShow)
+{
+	bBodyVisible = bShow;
+	for (USceneComponent* Part : Parts)
+	{
+		if (Part)
+		{
+			Part->SetVisibility(bShow);
+		}
+	}
+}
+
+bool UAlienAppearanceComponent::ShowPose(UStaticMesh* PoseMesh)
+{
+	if (!ModelComponent || !PoseMesh || !RestMesh)
+	{
 		return false;
 	}
+	// Same scale and centre as the normal pose; the feet stay on the ground even if the pose moves them.
+	const FBox PoseBounds = PoseMesh->GetBoundingBox().TransformBy(FTransform(ModelFix));
+	ModelComponent->SetStaticMesh(PoseMesh);
+	ModelComponent->SetRelativeLocation(FVector(ModelOffset.X, ModelOffset.Y, -PoseBounds.Min.Z * ModelScale));
 	return true;
+}
+
+void UAlienAppearanceComponent::EndPose()
+{
+	if (ModelComponent && RestMesh && ModelComponent->GetStaticMesh() != RestMesh)
+	{
+		ModelComponent->SetStaticMesh(RestMesh);
+		ModelComponent->SetRelativeLocation(ModelOffset);
+	}
+}
+
+USceneComponent* UAlienAppearanceComponent::GetHeadTop(FVector& OutOffset) const
+{
+	if (bIsModel)
+	{
+		// One rigid mesh: the top of the figure, moving with the body.
+		OutOffset = FVector(0.f, 0.f, 0.96f * ModelHeight);
+		return BodyPivot;
+	}
+	OutOffset = FVector(0.f, 0.f, HeadTopOffset);
+	return HeadPivot;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -550,6 +650,25 @@ void UAlienAppearanceComponent::UpdateAnimation(float DeltaSeconds, float SpeedA
 	SpeedAlpha = FMath::Clamp(SpeedAlpha, 0.f, 1.f);
 	AnimTime += DeltaSeconds * (0.8f + Energy) * (1.f + SpeedAlpha * 1.5f + Excite);
 
+	// A body has weight: lean into turns (yaw rate) and pitch when speeding up or slowing down.
+	float TargetRoll = 0.f;
+	float TargetPitch = 0.f;
+	if (const USceneComponent* Parent = GetAttachParent())
+	{
+		const float ParentYaw = static_cast<float>(Parent->GetComponentRotation().Yaw);
+		if (bHasLastYaw && DeltaSeconds > KINDA_SMALL_NUMBER)
+		{
+			const float YawRate = FRotator::NormalizeAxis(ParentYaw - LastParentYaw) / DeltaSeconds;
+			TargetRoll = FMath::Clamp(YawRate * 0.06f * SpeedAlpha, -10.f, 10.f);
+			TargetPitch = FMath::Clamp(-(SpeedAlpha - LastSpeedAlpha) / DeltaSeconds * 5.f, -8.f, 8.f);
+		}
+		LastParentYaw = ParentYaw;
+		bHasLastYaw = true;
+	}
+	LastSpeedAlpha = SpeedAlpha;
+	LeanRoll = FMath::FInterpTo(LeanRoll, TargetRoll, DeltaSeconds, 5.f);
+	LeanPitch = FMath::FInterpTo(LeanPitch, TargetPitch, DeltaSeconds, 3.f);
+
 	// Body bob / squash & stretch.
 	const float Wave = FMath::Sin(AnimTime * 4.f);
 	float BodyLift = HoverHeight;
@@ -564,11 +683,6 @@ void UAlienAppearanceComponent::UpdateAnimation(float DeltaSeconds, float SpeedA
 		// Models are rigid figures: half the squash, and a waddle instead of swinging legs.
 		Squash = Wave * (0.025f + 0.04f * SpeedAlpha + 0.03f * Excite) * (bIsModel ? 0.5f : 1.f);
 		BodyPivot->SetRelativeScale3D(FVector(1.f - Squash * 0.5f, 1.f - Squash * 0.5f, 1.f + Squash));
-		if (bIsModel)
-		{
-			const float Step = AnimTime * 6.f;
-			BodyPivot->SetRelativeRotation(FRotator(-3.f * SpeedAlpha, 0.f, FMath::Sin(Step) * 4.f * SpeedAlpha));
-		}
 
 		if (FootL && FootR)
 		{
@@ -577,6 +691,14 @@ void UAlienAppearanceComponent::UpdateAnimation(float DeltaSeconds, float SpeedA
 			FootL->SetRelativeLocation(FootLBase + FVector(FMath::Cos(Step) * Lift, 0.f, FMath::Max(0.f, FMath::Sin(Step)) * Lift));
 			FootR->SetRelativeLocation(FootRBase + FVector(FMath::Cos(Step + PI) * Lift, 0.f, FMath::Max(0.f, FMath::Sin(Step + PI)) * Lift));
 		}
+	}
+
+	// Models are one rigid figure: they waddle, lean, and turn a little towards what they look at.
+	if (bIsModel)
+	{
+		const float Waddle = bHovers ? 0.f : FMath::Sin(AnimTime * 6.f) * 4.f * SpeedAlpha;
+		const float BodyYaw = HeadRotation.Yaw * 0.35f * (1.f - SpeedAlpha);
+		BodyPivot->SetRelativeRotation(FRotator(-3.f * SpeedAlpha + LeanPitch, BodyYaw, Waddle + LeanRoll));
 	}
 
 	// Head follows the top of the body.

@@ -4,8 +4,9 @@
 // alien's height and stood on its feet) or made of engine basic shapes (spheres, cylinders, cones,
 // cubes): one of the built-in shapes (Blob / Tall / Squat) or fully described by the Parts list
 // (BodyShape = Custom). Animation is procedural (bob, squash & stretch, walk waddle / swing, head
-// look-at, blink, wing flaps, flame flicker), which is far cheaper on Quest than skeletal meshes +
-// animation blueprints.
+// look-at, blink, wing flaps, flame flicker; models lean into turns and when speeding up), which is
+// far cheaper on Quest than skeletal meshes + animation blueprints. Signature moves
+// (UAlienActionComponent) bend the whole body through the action transform and extra lift.
 // A Blueprint subclass of AAlienCharacter with a skeletal mesh also works; this component then stays empty.
 
 #pragma once
@@ -67,6 +68,31 @@ public:
 	/** True when the body is an imported model rather than basic shapes. */
 	bool IsModel() const { return bIsModel; }
 
+	/** Where the body's feet sit relative to the parent (the owner places it). Moves build on it. */
+	void SetBaseLocation(const FVector& Location);
+
+	/** Extra scale / rotation / offset of the whole body for signature moves (pivot: the feet). */
+	void SetActionTransform(const FVector& Scale, const FRotator& Rotation = FRotator::ZeroRotator, const FVector& Offset = FVector::ZeroVector);
+	void ClearActionTransform() { SetActionTransform(FVector::OneVector); }
+
+	/** Lifts the whole body off the ground (flying). The capsule and the contact shadow stay down. */
+	void SetExtraLift(float Lift);
+	float GetExtraLift() const { return ExtraLift; }
+
+	/** Hides / shows the body parts (effects attached to them are left alone). */
+	void SetBodyVisible(bool bShow);
+	bool IsBodyVisible() const { return bBodyVisible; }
+
+	/** The imported model's mesh component (nullptr for shape-built bodies). */
+	UStaticMeshComponent* GetModelComponent() const { return ModelComponent; }
+
+	/** Shows a second pose of the model (same scale, feet on the ground) until EndPose(). */
+	bool ShowPose(UStaticMesh* PoseMesh);
+	void EndPose();
+
+	/** The component head effects (flames) attach to, and the top of the head relative to it. */
+	USceneComponent* GetHeadTop(FVector& OutOffset) const;
+
 	/** Optional material overrides (default: /Game/AlienMuseum/Materials). */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Alien")
 	TObjectPtr<UMaterialInterface> SkinMaterialOverride;
@@ -100,6 +126,7 @@ private:
 	UMaterialInterface* GetPartMaterial(const FAlienBodyPart& Part);
 	UStaticMesh* GetShapeMesh(EAlienPartShape Shape) const;
 	void AnimateDataParts(float SpeedAlpha);
+	void ApplyRootTransform();
 
 	UStaticMeshComponent* AddPart(const TCHAR* BaseName, UStaticMesh* Mesh, USceneComponent* Parent, const FTransform& Relative, UMaterialInterface* Material);
 	USceneComponent* AddPivot(const TCHAR* BaseName, USceneComponent* Parent, const FTransform& Relative);
@@ -118,6 +145,13 @@ private:
 
 	UPROPERTY(Transient)
 	TArray<TObjectPtr<UStaticMeshComponent>> Eyes;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UStaticMeshComponent> ModelComponent;
+
+	/** The model's normal pose (while ShowPose swaps the mesh). */
+	UPROPERTY(Transient)
+	TObjectPtr<UStaticMesh> RestMesh;
 
 	UPROPERTY(Transient)
 	TObjectPtr<UStaticMeshComponent> FootL;
@@ -156,6 +190,28 @@ private:
 	float HoverHeight = 0.f;
 	FVector2D HeadBaseXY = FVector2D::ZeroVector;
 	float HeadBaseZ = 0.f;
+	float HeadTopOffset = 0.f;   // top of the head above the head pivot (shape bodies)
+
+	FQuat ModelFix = FQuat::Identity;
+	FVector ModelOffset = FVector::ZeroVector;
+	float ModelScale = 1.f;
+
+	// Whole-body transform: owner placement + materialize pop-in + signature moves.
+	FVector BaseLocation = FVector::ZeroVector;
+	bool bHasBaseLocation = false;
+	float MaterializeScale = 1.f;
+	FVector ActionScale = FVector::OneVector;
+	FRotator ActionRotation = FRotator::ZeroRotator;
+	FVector ActionOffset = FVector::ZeroVector;
+	float ExtraLift = 0.f;
+	bool bBodyVisible = true;
+
+	// Weight: models lean into turns and pitch when they speed up or slow down.
+	float LastParentYaw = 0.f;
+	bool bHasLastYaw = false;
+	float LastSpeedAlpha = 0.f;
+	float LeanRoll = 0.f;
+	float LeanPitch = 0.f;
 
 	FVector FootLBase = FVector::ZeroVector;
 	FVector FootRBase = FVector::ZeroVector;

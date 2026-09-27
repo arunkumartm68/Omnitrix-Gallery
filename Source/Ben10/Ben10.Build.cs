@@ -16,6 +16,7 @@ public class Ben10 : ModuleRules
 			"Core",
 			"CoreUObject",
 			"Engine",
+			"PhysicsCore", // UPhysicalMaterial (bouncy energy balls)
 			"InputCore",
 			"EnhancedInput",
 			"AIModule",

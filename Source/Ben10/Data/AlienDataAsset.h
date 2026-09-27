@@ -16,6 +16,27 @@
 
 class AAlienCharacter;
 class UStaticMesh;
+class UChamberHabitatAsset;
+
+/** Signature move an alien performs now and then, and to show off to a visitor (UAlienActionComponent). */
+UENUM(BlueprintType)
+enum class EAlienAction : uint8
+{
+	Roll UMETA(ToolTip = "Curls into an armoured ball, rolls and bounces off the glass (Cannonbolt)"),
+	Dash UMETA(ToolTip = "Super-speed zig-zag with after-images (XLR8)"),
+	Flare UMETA(ToolTip = "Head flames surge and a fireball flies (Heatblast)"),
+	Flex UMETA(ToolTip = "Faces the visitor, strikes a strength pose and stomps a shockwave (Four Arms)"),
+	CrystalBurst UMETA(ToolTip = "Crystal spikes burst out of the ground around it (Diamondhead)"),
+	Phase UMETA(ToolTip = "Fades into mist and reappears somewhere else (Ghostfreak)"),
+	Scream UMETA(ToolTip = "Sonic rings blast out towards the visitor (Echo Echo)"),
+	Clone UMETA(ToolTip = "Splits into copies that step out and merge back (Ditto, Echo Echo)"),
+	Spit UMETA(ToolTip = "Eats a loose object and spits a bouncing energy ball (Upchuck)"),
+	Pounce UMETA(ToolTip = "Sniffs the air, then leaps (Wildmutt, Ripjaws)"),
+	Vines UMETA(ToolTip = "Vines lash out to the glass and pull back (Wildvine)"),
+	Melt UMETA(ToolTip = "Melts into the floor and re-forms somewhere else (Upgrade)"),
+	Scurry UMETA(ToolTip = "Quick tiny zig-zag scurry with hops (Grey Matter)"),
+	Fly UMETA(ToolTip = "Takes off and circles around the case (Stinkfly)")
+};
 
 /** Silhouette of the built-in placeholder alien. */
 UENUM(BlueprintType)
@@ -245,6 +266,40 @@ public:
 	/** Chamber light / glass tint while this alien lives in it. Alpha 0 = keep the chamber's own colour. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Chamber")
 	FLinearColor ChamberLightColor = FLinearColor(0.f, 0.f, 0.f, 0.f);
+
+	/** Home-world diorama built inside the case (ground, props with physics, ambient effect). */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Chamber")
+	TObjectPtr<UChamberHabitatAsset> Habitat;
+
+	// ---------- Signature moves ----------
+
+	/** Moves this alien performs; the first one is its show-off move for visitors. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Actions")
+	TArray<EAlienAction> SignatureActions;
+
+	/** Chance to perform a move (instead of wandering or looking around) when an idle period ends. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Actions", meta = (ClampMin = 0, ClampMax = 1))
+	float ActionChance = 0.4f;
+
+	/** Colour of the moves' effects (flames, trails, rings, crystals...). */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Actions")
+	FLinearColor ActionColor = FLinearColor(0.3f, 1.f, 0.4f);
+
+	/** Flames burn on top of the head all the time (Heatblast). */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Actions")
+	bool bHeadFlames = false;
+
+	/** Leaves glowing after-images whenever it runs fast (XLR8). Needs an imported model. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Actions")
+	bool bSpeedTrail = false;
+
+	/** Optional second pose of ModelMesh (same size and pivot), shown during Flex, e.g. a double-biceps pose. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Actions")
+	TSoftObjectPtr<UStaticMesh> PoseMesh;
+
+	/** Rolled-up form shown during Roll (e.g. Cannonbolt's ball model). Empty = a built-in armoured ball in the action colour. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Actions")
+	TSoftObjectPtr<UStaticMesh> BallMesh;
 
 	// ---------- Behaviour ----------
 

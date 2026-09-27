@@ -1,7 +1,9 @@
 // Alien Museum - a glass museum case that holds one alien.
 
 #include "Chamber/AlienChamber.h"
+#include "Chamber/ChamberHabitatComponent.h"
 #include "Aliens/AlienCharacter.h"
+#include "Aliens/AlienActionComponent.h"
 #include "Data/AlienDataAsset.h"
 #include "Core/MuseumAssets.h"
 #include "Ben10.h"
@@ -26,19 +28,21 @@ namespace
 	constexpr float FrameInset = 3.f;   // metal rim beyond the glass
 	constexpr float HandleGap = 8.f;    // resize handles float this far outside the frame
 	constexpr float MoveInset = 3.f;    // walkable floor stops this far inside the glass
+	constexpr float HandleLingerTime = 0.6f;
 
 	FVector ShapeScale(float SizeX, float SizeY, float SizeZ)
 	{
 		return FVector(SizeX, SizeY, SizeZ) / 100.f; // basic shapes are 100 cm
 	}
 
-	/** Invisible collision that only blocks pawns (the alien), never the pointer ray. */
+	/** Invisible collision that blocks the alien and the habitat's physics props, never the pointer ray. */
 	void MakePawnBlocker(UPrimitiveComponent* Component)
 	{
 		Component->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
 		Component->SetCollisionObjectType(ECC_WorldDynamic);
 		Component->SetCollisionResponseToAllChannels(ECR_Ignore);
 		Component->SetCollisionResponseToChannel(ECC_Pawn, ECR_Block);
+		Component->SetCollisionResponseToChannel(ECC_PhysicsBody, ECR_Block);
 		Component->SetCanEverAffectNavigation(false);
 		Component->SetGenerateOverlapEvents(false);
 	}
@@ -158,6 +162,10 @@ AAlienChamber::AAlienChamber()
 	ObstacleCrystal = MakeMesh(TEXT("ObstacleCrystal"), ConeFinder.Object, Root);
 	MakePawnBlocker(ObstacleCrystal);
 
+	// The occupant's home world (ground, props, ambient effect), built when an alien moves in.
+	Habitat = CreateDefaultSubobject<UChamberHabitatComponent>(TEXT("Habitat"));
+	Habitat->SetupAttachment(Root);
+
 	MovementBounds = CreateDefaultSubobject<UBoxComponent>(TEXT("MovementBounds"));
 	MovementBounds->SetupAttachment(Root);
 	MovementBounds->SetMobility(EComponentMobility::Movable);
@@ -175,8 +183,8 @@ AAlienChamber::AAlienChamber()
 	SelectBox->SetupAttachment(Root);
 	MakePointerTarget(SelectBox);
 
-	// Resize handles: top = height, left/right = width, base front = depth. Each is a knob with two
-	// arrows; an invisible sphere around it is what the pointer hits.
+	// Resize handles: top edge = height, left/right = width, base front = depth. Each is a knob with
+	// two arrows; an invisible sphere around it (bigger than the knob) is what the pointer hits.
 	const EChamberResizeAxis HandleAxes[] = { EChamberResizeAxis::Height, EChamberResizeAxis::Width, EChamberResizeAxis::Width, EChamberResizeAxis::Depth };
 	const float HandleSides[] = { 1.f, 1.f, -1.f, 1.f };
 	for (int32 i = 0; i < static_cast<int32>(UE_ARRAY_COUNT(HandleAxes)); ++i)
@@ -186,7 +194,7 @@ AAlienChamber::AAlienChamber()
 		Handle.Side = HandleSides[i];
 		Handle.Hit = CreateDefaultSubobject<USphereComponent>(*FString::Printf(TEXT("ResizeHandle%d"), i));
 		Handle.Hit->SetupAttachment(Root);
-		Handle.Hit->InitSphereRadius(6.f);
+		Handle.Hit->InitSphereRadius(8.f);
 		MakePointerTarget(Handle.Hit);
 		Handle.Hit->SetCollisionEnabled(ECollisionEnabled::NoCollision); // enabled while the handles are shown
 		Handle.Knob = MakeMesh(*FString::Printf(TEXT("ResizeKnob%d"), i), SphereFinder.Object, Handle.Hit);
@@ -297,6 +305,7 @@ void AAlienChamber::BuildLayout()
 
 	FloorGlow->SetRelativeLocation(FVector(0.f, 0.f, BaseHeight + 0.2f));
 	FloorGlow->SetRelativeScale3D(ShapeScale(Inner.X - 4.f, Inner.Y - 4.f, 0.4f));
+	FloorGlow->SetVisibility(!Habitat->HasHabitat()); // a habitat brings its own ground
 
 	Glass->SetRelativeLocation(FVector(0.f, 0.f, BaseHeight + GlassHeight * 0.5f));
 	Glass->SetRelativeScale3D(ShapeScale(Inner.X, Inner.Y, GlassHeight));
@@ -327,7 +336,10 @@ void AAlienChamber::BuildLayout()
 		}
 	}
 
-	// Invisible walls just inside the glass: one per side of the box, an octagon for a round pod.
+	// Invisible walls just inside the glass: one per side of the box, an octagon for a round pod. They
+	// are thick and grow outwards from the same inner face: a body pushed into a thin wall can be
+	// resolved out through its far side, a thick one always pushes it back into the case.
+	constexpr float WallHalfThickness = 6.f;
 	const int32 ActiveWalls = bBox ? 4 : NumWalls;
 	for (int32 i = 0; i < ContainmentWalls.Num(); ++i)
 	{
@@ -344,21 +356,22 @@ void AAlienChamber::BuildLayout()
 		if (bBox)
 		{
 			const bool bFrontBack = (i % 2) == 0; // walls 0 / 2 face +X / -X
-			Apothem = (bFrontBack ? Half.X : Half.Y) - 1.f;
-			HalfLength = (bFrontBack ? Half.Y : Half.X) + 1.f;
+			Apothem = (bFrontBack ? Half.X : Half.Y) - 2.f + WallHalfThickness; // inner face 2 cm inside the glass
+			HalfLength = (bFrontBack ? Half.Y : Half.X) + 2.f * WallHalfThickness;
 		}
 		else
 		{
-			Apothem = Half.X - 1.f;
-			HalfLength = Apothem * FMath::Tan(FMath::DegreesToRadians(180.f / NumWalls)) + 1.f;
+			const float InnerApothem = Half.X - 2.f;
+			Apothem = InnerApothem + WallHalfThickness;
+			HalfLength = (InnerApothem + 2.f * WallHalfThickness) * FMath::Tan(FMath::DegreesToRadians(180.f / NumWalls)) + 1.f;
 		}
 		const float Angle = FMath::DegreesToRadians(AngleDeg);
-		Wall->SetBoxExtent(FVector(1.f, HalfLength, GlassHeight * 0.5f));
+		Wall->SetBoxExtent(FVector(WallHalfThickness, HalfLength, GlassHeight * 0.5f));
 		Wall->SetRelativeLocation(FVector(FMath::Cos(Angle) * Apothem, FMath::Sin(Angle) * Apothem, BaseHeight + GlassHeight * 0.5f));
 		Wall->SetRelativeRotation(FRotator(0.f, AngleDeg, 0.f));
 	}
-	Ceiling->SetBoxExtent(FVector(Half.X, Half.Y, 1.f));
-	Ceiling->SetRelativeLocation(FVector(0.f, 0.f, TopZ));
+	Ceiling->SetBoxExtent(FVector(Half.X, Half.Y, WallHalfThickness));
+	Ceiling->SetRelativeLocation(FVector(0.f, 0.f, TopZ - 1.f + WallHalfThickness)); // inner face 1 cm under the lid
 
 	// Optional obstacles for the alien to walk around.
 	const float Small = FMath::Min(Half.X, Half.Y);
@@ -388,7 +401,7 @@ void AAlienChamber::BuildLayout()
 	InteriorLight->SetLightColor(ActiveLightColor);
 	InteriorLight->SetVisibility(bUseRealInteriorLight);
 
-	InfoRoot->SetRelativeLocation(FVector(0.f, 0.f, TopZ + 22.f));
+	InfoRoot->SetRelativeLocation(FVector(0.f, 0.f, TopZ + 30.f)); // clear of the height handle
 
 	LayoutResizeHandles(Half, TopZ);
 }
@@ -411,7 +424,10 @@ void AAlienChamber::LayoutResizeHandles(const FVector2f& Half, float TopZ)
 			break;
 		case EChamberResizeAxis::Height:
 		default:
-			Location = FVector(0.f, 0.f, TopZ + 6.f + HandleGap);
+			// Just outside the top edge that faces the viewer, overlapping the case's pointer box: the
+			// ray slides from the glass straight onto it (a knob above the middle of the lid cannot be
+			// reached from below a tall case).
+			Location = FVector(HeightHandleDir.X * (Half.X + FrameInset + 4.f), HeightHandleDir.Y * (Half.Y + FrameInset + 4.f), TopZ + 10.f);
 			break;
 		}
 		Handle.Hit->SetRelativeLocation(Location);
@@ -580,6 +596,22 @@ AAlienCharacter* AAlienChamber::SpawnAlien(UAlienDataAsset* Data)
 	// A big alien in a small case: grow the case so it fits (the clamp in SetInnerSize does that).
 	SetInnerSize(GetInnerSize());
 
+	// Its home world inside the glass. The seed keeps the layout the same for this case every time.
+	if (Data->Habitat)
+	{
+		KeepHabitatClearOfOccupant();
+		Habitat->Build(Data->Habitat, GetInnerHalfLocal(), BaseHeight, GlassHeight, static_cast<int32>(GetTypeHash(ChamberId)), Shape == EChamberShape::Round);
+		if (bGrabbed)
+		{
+			Habitat->SetFrozen(true);
+		}
+	}
+	FloorGlow->SetVisibility(!Habitat->HasHabitat());
+
+	// Stand on the (new) ground with the real capsule: a wide model gets a bigger capsule than its
+	// data height suggests, and it must not start inside the floor.
+	Alien->SetActorLocation(GetAlienSpawnLocation(Alien->GetCapsuleComponent()->GetScaledCapsuleHalfHeight()), false, nullptr, ETeleportType::TeleportPhysics);
+
 	ActiveLightColor = GetDesiredLightColor();
 	ApplyLightColor();
 	RefreshInfoText();
@@ -598,6 +630,8 @@ void AAlienChamber::RemoveAlien()
 	const bool bChanged = Occupant != nullptr || OccupantData != nullptr;
 	Occupant = nullptr;
 	OccupantData = nullptr;
+	Habitat->Clear();
+	FloorGlow->SetVisibility(true);
 	ActiveLightColor = LightColor;
 	ApplyLightColor();
 	RefreshInfoText();
@@ -667,6 +701,9 @@ bool AAlienChamber::FindRandomWanderPoint(const AAlienCharacter* Alien, FRandomS
 	const FCollisionShape SweepShape = FCollisionShape::MakeCapsule(CapsuleR * 0.9f, CapsuleHH * 0.85f);
 	const FVector Lift(0.f, 0.f, 3.f * Scale);
 	FCollisionQueryParams QueryParams(SCENE_QUERY_STAT(AlienWander), false, Alien);
+	// Loose habitat props don't count as obstacles: the alien walks into them and pushes them around.
+	FCollisionResponseParams Responses;
+	Responses.CollisionResponse.SetResponse(ECC_PhysicsBody, ECR_Ignore);
 
 	for (int32 Attempt = 0; Attempt < 10; ++Attempt)
 	{
@@ -689,7 +726,7 @@ bool AAlienChamber::FindRandomWanderPoint(const AAlienCharacter* Alien, FRandomS
 		}
 
 		FHitResult Hit;
-		const bool bBlocked = World->SweepSingleByChannel(Hit, Start + Lift, Candidate + Lift, FQuat::Identity, ECC_Pawn, SweepShape, QueryParams);
+		const bool bBlocked = World->SweepSingleByChannel(Hit, Start + Lift, Candidate + Lift, FQuat::Identity, ECC_Pawn, SweepShape, QueryParams, Responses);
 		if (!bBlocked)
 		{
 			OutPoint = Candidate;
@@ -701,12 +738,19 @@ bool AAlienChamber::FindRandomWanderPoint(const AAlienCharacter* Alien, FRandomS
 
 FVector AAlienChamber::GetAlienSpawnLocation(float CapsuleHalfHeight) const
 {
-	return SpawnPoint->GetComponentLocation() + FVector(0.f, 0.f, CapsuleHalfHeight + 1.f);
+	const float Ground = Habitat->HasHabitat() ? Habitat->GetWalkZ() - BaseHeight : 0.f;
+	return SpawnPoint->GetComponentLocation() + FVector(0.f, 0.f, CapsuleHalfHeight + 1.f + Ground * GetChamberScale());
 }
 
 float AAlienChamber::GetFloorZ() const
 {
-	return GetActorTransform().TransformPosition(FVector(0.f, 0.f, BaseHeight)).Z;
+	const float WalkZ = Habitat->HasHabitat() ? Habitat->GetWalkZ() : BaseHeight;
+	return GetActorTransform().TransformPosition(FVector(0.f, 0.f, WalkZ)).Z;
+}
+
+FVector2D AAlienChamber::GetWalkHalfSize() const
+{
+	return FVector2D(GetMoveHalfLocal());
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -719,10 +763,39 @@ void AAlienChamber::SetInnerSize(const FVector& NewSize)
 	{
 		return FMath::Clamp(Value, FMath::Max(SizeRange.X, GetMinSizeAlong(Axis)), FMath::Max(SizeRange.X, SizeRange.Y));
 	};
+	const FVector OldSize = GetInnerSize();
 	Depth = Fit(EChamberResizeAxis::Depth, NewSize.X);
 	Width = Fit(EChamberResizeAxis::Width, NewSize.Y);
 	GlassHeight = Fit(EChamberResizeAxis::Height, NewSize.Z);
 	BuildLayout();
+
+	// A live drag rebuilds the habitat once, when the handle is let go.
+	if (!IsBeingResized() && !GetInnerSize().Equals(OldSize, 0.1))
+	{
+		RebuildHabitat();
+	}
+}
+
+void AAlienChamber::RebuildHabitat()
+{
+	if (Habitat->HasHabitat())
+	{
+		KeepHabitatClearOfOccupant();
+		Habitat->Rebuild(GetInnerHalfLocal(), BaseHeight, GlassHeight);
+	}
+}
+
+void AAlienChamber::KeepHabitatClearOfOccupant()
+{
+	FVector2f Center = FVector2f::ZeroVector;
+	float Radius = 0.f;
+	if (Occupant)
+	{
+		const FVector Local = GetActorTransform().InverseTransformPosition(Occupant->GetActorLocation());
+		Center = FVector2f(static_cast<float>(Local.X), static_cast<float>(Local.Y));
+		Radius = Occupant->GetCapsuleComponent()->GetUnscaledCapsuleRadius() + 2.f;
+	}
+	Habitat->SetKeepClear(Center, Radius);
 }
 
 FVector AAlienChamber::GetOuterSize() const
@@ -866,6 +939,10 @@ void AAlienChamber::BeginResize(const UPrimitiveComponent* Handle)
 	{
 		return;
 	}
+	if (Occupant)
+	{
+		Occupant->GetActions()->StopAction(); // the walls are about to move
+	}
 	ResizeAxis = Found->Axis;
 	ResizeHandle = Handle;
 	ResizeStartSize = GetSizeAlong(ResizeAxis);
@@ -896,17 +973,51 @@ void AAlienChamber::EndResize()
 	ResizeAxis = EChamberResizeAxis::None;
 	ResizeHandle = nullptr;
 	SizeLabel->SetVisibility(false);
+	HandleLinger = HandleLingerTime;
 	UpdateHandleVisuals();
 	if (bChanged)
 	{
+		RebuildHabitat();
 		OnResized.Broadcast(this);
+	}
+}
+
+void AAlienChamber::AimHeightHandle()
+{
+	APlayerCameraManager* Camera = UGameplayStatics::GetPlayerCameraManager(this, 0);
+	if (!Camera)
+	{
+		return;
+	}
+	const FVector Local = GetActorTransform().InverseTransformPosition(Camera->GetCameraLocation());
+	const FVector2f Half = GetInnerHalfLocal();
+	FVector2f Dir;
+	if (Shape == EChamberShape::Round)
+	{
+		Dir = FVector2f(static_cast<float>(Local.X), static_cast<float>(Local.Y)).GetSafeNormal();
+		if (Dir.IsNearlyZero())
+		{
+			Dir = FVector2f(1.f, 0.f);
+		}
+	}
+	else
+	{
+		// The middle of the side the viewer looks at (relative to the box's proportions).
+		const float SideX = FMath::Abs(static_cast<float>(Local.X)) / FMath::Max(1.f, Half.X);
+		const float SideY = FMath::Abs(static_cast<float>(Local.Y)) / FMath::Max(1.f, Half.Y);
+		Dir = SideX >= SideY ? FVector2f(Local.X >= 0.0 ? 1.f : -1.f, 0.f) : FVector2f(0.f, Local.Y >= 0.0 ? 1.f : -1.f);
+	}
+	if (!Dir.Equals(HeightHandleDir, 0.02f))
+	{
+		HeightHandleDir = Dir;
+		LayoutResizeHandles(Half, BaseHeight + GlassHeight);
 	}
 }
 
 void AAlienChamber::UpdateHandleVisuals()
 {
 	const bool bResizing = IsBeingResized();
-	const bool bShow = bResizing || (HoverCount > 0 && !bGrabbed);
+	const bool bShow = bResizing || ((HoverCount > 0 || HandleLinger > 0.f) && !bGrabbed);
 	for (FChamberResizeHandle& Handle : ResizeHandles)
 	{
 		if (!Handle.Hit)
@@ -987,6 +1098,8 @@ void AAlienChamber::BeginGrab()
 	EndResize();
 	bGrabbed = true;
 	bMovedSinceGrab = false;
+	HandleLinger = 0.f;
+	Habitat->SetFrozen(true); // loose props ride along with the case
 	GrabStartLocation = GrabTargetLocation = GetActorLocation();
 	GrabStartYaw = GrabTargetYaw = GetActorRotation().Yaw;
 	GrabStartScale = GrabTargetScale = GetChamberScale();
@@ -1057,6 +1170,7 @@ void AAlienChamber::NotifyPlaced()
 	{
 		Occupant->SetHeld(false);
 	}
+	Habitat->SetFrozen(false);
 	// The alien rode along while attached; start tracking unaided moves from here.
 	LastTransform = GetActorTransform();
 	bHasLastTransform = true;
@@ -1136,16 +1250,22 @@ void AAlienChamber::RefreshInfoText()
 void AAlienChamber::CarryOccupantAlong()
 {
 	const FTransform Current = GetActorTransform();
-	// While carried the alien is attached and rides along by itself. Otherwise the case can still be
-	// moved without a hand - spatial-anchor corrections, settling - and the walking alien must go with it.
-	if (bHasLastTransform && Occupant && !Occupant->IsHeld()
+	// While carried the alien and the loose props are attached and ride along by themselves. Otherwise
+	// the case can still be moved without a hand - spatial-anchor corrections, settling - and the
+	// walking alien and the simulating props must go with it.
+	const bool bMoved = bHasLastTransform
 		&& (!Current.GetLocation().Equals(LastTransform.GetLocation(), 0.05)
-			|| !Current.GetRotation().Equals(LastTransform.GetRotation(), 1.e-4)))
+			|| !Current.GetRotation().Equals(LastTransform.GetRotation(), 1.e-4));
+	if (bMoved && Occupant && !Occupant->IsHeld())
 	{
 		const FVector Local = LastTransform.InverseTransformPositionNoScale(Occupant->GetActorLocation());
 		const float YawDelta = FRotator::NormalizeAxis(Current.Rotator().Yaw - LastTransform.Rotator().Yaw);
 		Occupant->SetActorLocationAndRotation(Current.TransformPositionNoScale(Local),
 			FRotator(0.f, Occupant->GetActorRotation().Yaw + YawDelta, 0.f), false, nullptr, ETeleportType::TeleportPhysics);
+	}
+	if (bMoved && !bGrabbed)
+	{
+		Habitat->CarryLooseProps(LastTransform, Current);
 	}
 	LastTransform = Current;
 	bHasLastTransform = true;
@@ -1187,6 +1307,16 @@ void AAlienChamber::Tick(float DeltaSeconds)
 		FaceViewer(InfoRoot, DeltaSeconds);
 	}
 
+	if (HandleLinger > 0.f)
+	{
+		HandleLinger -= DeltaSeconds;
+		if (HandleLinger <= 0.f)
+		{
+			HandleLinger = 0.f;
+			UpdateHandleVisuals();
+		}
+	}
+
 	// Size read-out follows the handle being dragged.
 	if (IsBeingResized())
 	{
@@ -1226,8 +1356,18 @@ void AAlienChamber::Tick(float DeltaSeconds)
 
 void AAlienChamber::OnPointerHover(UPrimitiveComponent* HitComponent, bool bHovered)
 {
-	// Both hands may point at the chamber; the handles stay while at least one does.
+	// Both hands may point at the chamber; the handles stay while at least one does, and a moment
+	// longer so the pointer can cross the gap between the glass and a knob.
+	const bool bWereShown = HoverCount > 0 || HandleLinger > 0.f;
 	HoverCount = FMath::Max(0, HoverCount + (bHovered ? 1 : -1));
+	if (HoverCount == 0 && !bHovered)
+	{
+		HandleLinger = HandleLingerTime;
+	}
+	else if (HoverCount > 0 && !bWereShown && !IsBeingResized())
+	{
+		AimHeightHandle();
+	}
 	if (GetResizeAxis(HitComponent) != EChamberResizeAxis::None)
 	{
 		if (bHovered)

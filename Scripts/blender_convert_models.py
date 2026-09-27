@@ -31,6 +31,8 @@ MAX_SPAN = 56.0         # cm: widest pose that still fits the default chamber wi
 # One entry per downloaded zip. height = display height in cm (at chamber scale 1).
 # rotate = degrees (X, Y, Z) so the model stands up and faces Blender's front (-Y).
 # pose = upper-arm bone -> degrees to lower it (baked T-pose -> relaxed pose).
+# folder / file = a download holding more than one model (the key is then just a name).
+# colors = material -> linear RGB, replacing whatever the material had (texture or colour).
 MODELS = {
     "ben-10-cannonbolt": dict(id="Cannonbolt_1", alien="Cannonbolt", height=50),
     "cannonbolt": dict(id="Cannonbolt_2", alien="Cannonbolt", height=50,
@@ -58,6 +60,20 @@ MODELS = {
     "upgrade-ben-10-vilgax-attacks-fan-model": dict(id="Upgrade_2", alien="Upgrade", height=52),
     "wildmutt": dict(id="Wildmutt", alien="Wildmutt", height=40, rotate=(0, 0, -90),
                      pose={"bip_upperArm_L": (50, "forward"), "bip_upperArm_R": (50, "forward")}),
+    # Ben 10: Protector of Earth (Wii) Cannonbolt: the standing figure and his rolled-up ball form.
+    "cannonbolt-wii": dict(id="Cannonbolt_3", alien="Cannonbolt", height=50,
+                           folder="ben-10-cannonbolt-and-ball", file="Model.obj"),
+    "cannonbolt-wii-ball": dict(id="CannonboltBall", alien="Cannonbolt ball", height=30,
+                                folder="ben-10-cannonbolt-and-ball", file="Model (2).obj"),
+    # Source-engine model: tiny single-colour textures behind shader groups, so set the colours directly.
+    "stinkfly": dict(id="Stinkfly", alien="Stinkfly", height=50, rotate=(0, 0, 180), rebuild_materials=True,
+                     max_triangles=50000, textures={"Glass": "Glass.png"},
+                     colors={"Body_1": (0.122, 0.156, 0.009), "Black_Body": (0.02, 0.02, 0.022),
+                             "White_Body": (0.85, 0.85, 0.85), "Glow": (0.991, 0.283, 0.025),
+                             "Teeth": (0.776, 0.799, 0.361), "Tongue": (0.089, 0.136, 0.041),
+                             "Mouth": (0.15, 0.02, 0.02), "omni black": (0.02, 0.02, 0.02),
+                             "omni black.1": (0.02, 0.02, 0.02), "omni black.2": (0.02, 0.02, 0.02),
+                             "Mat.2": (0.2, 1.0, 0.2)}),
 }
 
 
@@ -140,6 +156,8 @@ def fix_materials(cfg, folder):
         if mat.name in cfg.get("colors", {}):
             bsdf = principled(mat)
             if bsdf:
+                for link in list(bsdf.inputs["Base Color"].links):
+                    mat.node_tree.links.remove(link)
                 bsdf.inputs["Base Color"].default_value = (*cfg["colors"][mat.name], 1.0)
         bsdf = principled(mat)
         if not bsdf:
@@ -404,8 +422,9 @@ def export_glb(path):
 
 
 def convert(folder_name, cfg, downloads, out_dir):
+    folder_name = cfg.get("folder", folder_name)
     folder = os.path.join(downloads, folder_name)
-    path = common.find_model_file(folder)
+    path = os.path.join(folder, "source", cfg["file"]) if "file" in cfg else common.find_model_file(folder)
     common.reset_scene()
     importer = common.import_model(path)
     common.relink_missing_images(folder)

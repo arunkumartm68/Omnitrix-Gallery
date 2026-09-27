@@ -33,3 +33,10 @@ UMaterialInterface* MuseumAssets::OccluderMaterial() { return LoadMuseumAsset<UM
 UMaterialInterface* MuseumAssets::AlienSkinMaterial() { return LoadMuseumAsset<UMaterialInterface>(TEXT("/Game/AlienMuseum/Materials/M_AlienSkin.M_AlienSkin")); }
 UMaterialInterface* MuseumAssets::BlobShadowMaterial() { return LoadMuseumAsset<UMaterialInterface>(TEXT("/Game/AlienMuseum/Materials/M_BlobShadow.M_BlobShadow")); }
 UMaterialInterface* MuseumAssets::AlienTranslucentMaterial() { return LoadMuseumAsset<UMaterialInterface>(TEXT("/Game/AlienMuseum/Materials/M_AlienTranslucent.M_AlienTranslucent")); }
+
+UMaterialInterface* MuseumAssets::FXGlowMaterial() { return LoadMuseumAsset<UMaterialInterface>(TEXT("/Game/AlienMuseum/Materials/M_FXGlow.M_FXGlow")); }
+UMaterialInterface* MuseumAssets::EnvLitMaterial() { return LoadMuseumAsset<UMaterialInterface>(TEXT("/Game/AlienMuseum/Materials/M_EnvLit.M_EnvLit")); }
+UMaterialInterface* MuseumAssets::EnvLavaMaterial() { return LoadMuseumAsset<UMaterialInterface>(TEXT("/Game/AlienMuseum/Materials/M_EnvLava.M_EnvLava")); }
+UMaterialInterface* MuseumAssets::EnvWaterMaterial() { return LoadMuseumAsset<UMaterialInterface>(TEXT("/Game/AlienMuseum/Materials/M_EnvWater.M_EnvWater")); }
+UMaterialInterface* MuseumAssets::EnvMistMaterial() { return LoadMuseumAsset<UMaterialInterface>(TEXT("/Game/AlienMuseum/Materials/M_EnvMist.M_EnvMist")); }
+UMaterialInterface* MuseumAssets::FXRingMaterial() { return LoadMuseumAsset<UMaterialInterface>(TEXT("/Game/AlienMuseum/Materials/M_FXRing.M_FXRing")); }
