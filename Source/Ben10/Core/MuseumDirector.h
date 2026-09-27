@@ -15,6 +15,7 @@ class AAlienChamber;
 class AAlienCollectionPanel;
 class ADirectionalLight;
 class UAlienCollectionAsset;
+struct FStreamableHandle;
 class UAlienDataAsset;
 class UMuseumSceneComponent;
 class UMuseumPersistenceComponent;
@@ -176,6 +177,10 @@ private:
 	void HandleOccupantChanged(AAlienChamber* Chamber);
 
 	void RestoreMuseum();
+
+	/** Loads every collection alien's model (and pose / ball meshes) in the background, so placing one never waits on storage. */
+	void PreloadAlienAssets();
+
 	void RegisterChamber(AAlienChamber* Chamber);
 	void SpawnStarterChamber();
 	void PushOutOfOtherChambers(AAlienChamber* Chamber) const;
@@ -198,5 +203,8 @@ private:
 	TObjectPtr<AAlienCollectionPanel> Panel;
 
 	FTimerHandle StartupTimer;
+
+	/** Keeps the preloaded alien meshes in memory. */
+	TSharedPtr<FStreamableHandle> PreloadHandle;
 	bool bMuseumReady = false;
 };

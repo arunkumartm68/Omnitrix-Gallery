@@ -9,6 +9,9 @@
 #include "UI/AlienCollectionPanel.h"
 #include "Ben10.h"
 #include "Camera/PlayerCameraManager.h"
+#include "Engine/AssetManager.h"
+#include "Engine/StaticMesh.h"
+#include "Engine/StreamableManager.h"
 #include "Components/LightComponent.h"
 #include "Engine/DirectionalLight.h"
 #include "Engine/World.h"
@@ -148,6 +151,7 @@ void AMuseumDirector::BeginPlay()
 	{
 		Panel->SetCollection(Collection);
 	}
+	PreloadAlienAssets();
 
 	// The key light that follows the viewer: the first movable directional light in the level.
 	for (TActorIterator<ADirectionalLight> It(GetWorld()); It; ++It)
@@ -194,6 +198,40 @@ void AMuseumDirector::HandleSceneReady(bool bDeviceScene)
 	UE_LOG(LogAlienMuseum, Log, TEXT("Scene ready (%s)"), bDeviceScene ? TEXT("real room") : TEXT("fallback floor"));
 	// Give the headset a moment to report a real head pose before placing things in front of it.
 	GetWorldTimerManager().SetTimer(StartupTimer, this, &AMuseumDirector::RestoreMuseum, FMath::Max(0.01f, StartupDelay), false);
+}
+
+void AMuseumDirector::PreloadAlienAssets()
+{
+	if (!Collection)
+	{
+		return;
+	}
+	TArray<FSoftObjectPath> Paths;
+	for (const UAlienDataAsset* Alien : Collection->Aliens)
+	{
+		if (!Alien)
+		{
+			continue;
+		}
+		for (const TSoftObjectPtr<UStaticMesh>* Mesh : { &Alien->ModelMesh, &Alien->PoseMesh, &Alien->BallMesh })
+		{
+			if (!Mesh->IsNull())
+			{
+				Paths.AddUnique(Mesh->ToSoftObjectPath());
+			}
+		}
+	}
+	if (Paths.Num() == 0)
+	{
+		return;
+	}
+	const double Start = FPlatformTime::Seconds();
+	const int32 Count = Paths.Num();
+	PreloadHandle = UAssetManager::GetStreamableManager().RequestAsyncLoad(MoveTemp(Paths),
+		FStreamableDelegate::CreateWeakLambda(this, [Start, Count]()
+		{
+			UE_LOG(LogAlienMuseum, Log, TEXT("Preloaded %d alien meshes in %.1f s"), Count, FPlatformTime::Seconds() - Start);
+		}));
 }
 
 void AMuseumDirector::RestoreMuseum()
