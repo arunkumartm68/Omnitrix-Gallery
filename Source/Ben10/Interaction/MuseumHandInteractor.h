@@ -84,6 +84,15 @@ public:
 	bool IsGrabPressed() const { return bGrabPressed; }
 	const FMuseumPointerHit& GetPointerHit() const { return PointerHit; }
 
+	/**
+	 * The point that taps on glass: the index fingertip (hand tracking - not while pinching or making a fist,
+	 * those select and grab) or the controller's tip. False on the desktop and while the hand is lost.
+	 */
+	bool GetTapPoint(FVector& OutPoint) const { OutPoint = TapPoint; return bHasTapPoint; }
+
+	/** A short buzz on this hand's controller (nothing with hand tracking). Amplitude 0..1. */
+	void PulseHaptics(float Amplitude, float Duration = 0.04f);
+
 	// ---- Visual overrides (valid for the current frame) ----
 	/** Makes the laser end at EndPoint with the given colour, e.g. for a placement preview. */
 	void SetLaserOverride(const FVector& EndPoint, const FLinearColor& Color);
@@ -159,6 +168,10 @@ private:
 	bool bControllerGrab = false;
 	bool bPinching = false;
 	bool bFist = false;
+
+	FVector TapPoint = FVector::ZeroVector;
+	bool bHasTapPoint = false;
+	FTimerHandle HapticTimer;
 
 	bool bHasDesktopRay = false;
 	FVector DesktopOrigin = FVector::ZeroVector;

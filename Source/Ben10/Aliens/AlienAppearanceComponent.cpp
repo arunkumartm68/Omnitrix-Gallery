@@ -404,6 +404,7 @@ void UAlienAppearanceComponent::BuildModelBody(const UAlienDataAsset* Data, USta
 
 	const FVector Half = ModelBounds.GetExtent() * Scale;
 	ModelRadius = FMath::Max(Half.X, Half.Y);
+	ModelFront = Half.X; // the model faces +X after the fix-up
 	CollisionRadius = ModelRadius * 0.9f;       // keeps outstretched limbs inside the glass
 	ShadowRadius = FMath::Min(ModelRadius, 0.3f * H);
 
@@ -465,6 +466,8 @@ void UAlienAppearanceComponent::BuildRig(const UAlienDataAsset* Data, USkeletalM
 			}
 		}
 	};
+	const FBoxSphereBounds MeshBounds = Mesh->GetBounds();
+	const float Ground = static_cast<float>(MeshBounds.Origin.Z - MeshBounds.BoxExtent.Z);
 	for (const FAlienRigLeg& Leg : RigSettings.Legs)
 	{
 		FRigLeg State;
@@ -486,7 +489,9 @@ void UAlienAppearanceComponent::BuildRig(const UAlienDataAsset* Data, USkeletalM
 		State.LowerLength = FMath::Max(0.01f, static_cast<float>(FVector::Dist(Joint, Tip)));
 		State.Bend = (Joint - (Root + Tip) * 0.5f).GetSafeNormal();
 		State.Phase = Leg.Phase;
+		State.PawLength = FMath::Clamp(static_cast<float>(Tip.Z) - Ground, 0.03f * RigHeight, 0.4f * RigHeight);
 		State.bFront = Leg.bFront;
+		State.bLeft = Tip.Y < 0.f; // the model faces +X, so +Y is its right
 		RigLegs.Add(State);
 	}
 	FindAll(RigSettings.Spine, RigSpine);
@@ -561,6 +566,26 @@ float UAlienAppearanceComponent::PlayClip(EAlienClip Clip, bool bLoop, float Ble
 	ClipFadeIn = ActiveClipWeight >= 0.99f ? 0.01f : FMath::Max(0.01f, BlendTime);
 	ClipFadeOut = FMath::Min(0.25f, Length * 0.3f);
 	return Length / ActiveClipRate;
+}
+
+void UAlienAppearanceComponent::SetFrontReach(const FVector& LeftPoint, const FVector& RightPoint, float Weight)
+{
+	FrontReachPoints[0] = LeftPoint;
+	FrontReachPoints[1] = RightPoint;
+	FrontReachWeight = FMath::Clamp(Weight, 0.f, 1.f);
+}
+
+bool UAlienAppearanceComponent::CanReachFront() const
+{
+	return RigComponent && RigSpine.Num() > 0 && RigLegs.ContainsByPredicate([](const FRigLeg& Leg) { return Leg.bFront; });
+}
+
+void UAlienAppearanceComponent::Sniff()
+{
+	if (RigSettings.bSniffs && SniffTime < 0.f)
+	{
+		SniffTime = 0.f;
+	}
 }
 
 void UAlienAppearanceComponent::StopClip(float BlendTime)
@@ -720,8 +745,52 @@ void UAlienAppearanceComponent::UpdateRig(float DeltaSeconds, float TurnAlpha, f
 		Turn = FQuat::Identity;
 	}
 
+	// ---- Front paws up on something (the glass): the body pitches up around the hips until the shoulders
+	// are above the paws, and steps forward if they are still too far (the capsule keeps the body back from
+	// a wall); pass 2 puts the paws there.
+	const FTransform ComponentTransform = Rig->GetComponentTransform();
+	auto ReachWrist = [this, &ComponentTransform, &Forward, &Up](const FRigLeg& Leg)
+	{
+		// The pads go on the point: the wrist stays back from it and a little below.
+		const FVector Point = ComponentTransform.InverseTransformPosition(FrontReachPoints[Leg.bLeft ? 0 : 1]);
+		return Point - Forward * (0.45f * Leg.PawLength) - Up * (0.3f * Leg.PawLength);
+	};
+	FrontReach = FMath::FInterpTo(FrontReach, FrontReachWeight, DeltaSeconds, 14.f);
+	float WantRear = 0.f;
+	float WantShift = 0.f;
+	if (FrontReach > 0.001f && RigSpine.Num() > 0)
+	{
+		constexpr float MaxRear = 50.f;
+		const FVector Hips = RigRestSpace[RigSpine[0]].GetLocation();
+		for (const FRigLeg& Leg : RigLegs)
+		{
+			if (!Leg.bFront)
+			{
+				continue;
+			}
+			const FVector Wrist = ReachWrist(Leg);
+			const FVector Shoulder = RigRestSpace[Leg.Upper].GetLocation();
+			const float Reach = 0.85f * (Leg.UpperLength + Leg.LowerLength);
+			float Angle = 0.f;
+			FVector Raised = Shoulder;
+			while (Angle < MaxRear && Raised.Z < Wrist.Z + 0.2f * Reach)
+			{
+				Angle += 2.5f;
+				Raised = Hips + TurnAround(NoseUp, Angle).RotateVector(Shoulder - Hips);
+			}
+			const FVector Gap = Wrist - Raised;
+			const float Level = FMath::Sqrt(FMath::Max(0.f, FMath::Square(Reach) - static_cast<float>(FMath::Square(Gap.Z) + FMath::Square(Gap.Y))));
+			WantRear = FMath::Max(WantRear, Angle);
+			WantShift = FMath::Max(WantShift, static_cast<float>(Gap.X) - Level);
+		}
+		WantShift = FMath::Clamp(WantShift, 0.f, 0.6f * H);
+	}
+	RigRear = FMath::FInterpTo(RigRear, WantRear * FrontReach, DeltaSeconds, 12.f);
+	RigReachShift = FMath::FInterpTo(RigReachShift, WantShift * FrontReach, DeltaSeconds, 12.f);
+
 	// ---- Body: dips on every step, sways from side to side, crouches, breathes.
-	FVector RootOffset = Up * (-0.012f * H * GaitMoving * (0.5f + 0.5f * FMath::Cos(4.f * PI * GaitCycle)) - RigCrouch * 0.14f * H);
+	FVector RootOffset = Up * (-0.012f * H * GaitMoving * (0.5f + 0.5f * FMath::Cos(4.f * PI * GaitCycle)) - RigCrouch * 0.14f * H)
+		+ Forward * RigReachShift;
 	const float Sway = FMath::Sin(2.f * PI * GaitCycle) * 3.f * GaitMoving;
 	for (int32 i = 0; i < RigSpine.Num(); ++i)
 	{
@@ -732,10 +801,25 @@ void UAlienAppearanceComponent::UpdateRig(float DeltaSeconds, float TurnAlpha, f
 	{
 		AddRigTurn(RigSpine.Last(), TurnAround(NoseUp, Breath * FMath::Lerp(1.2f, 2.5f, Excite)));
 	}
+	if (RigRear > 0.01f && RigSpine.Num() > 0)
+	{
+		// Up on the hind legs: everything turns up around the hips (the hind paws stay planted, pass 2)...
+		AddRigTurn(RigSpine[0], TurnAround(NoseUp, RigRear));
+		// ...but a tail hanging from them stays as it hung.
+		int32 Above = RigTail.Num() > 0 ? RigParents[RigTail[0]] : INDEX_NONE;
+		while (Above != INDEX_NONE && Above != RigSpine[0])
+		{
+			Above = RigParents[Above];
+		}
+		if (Above != INDEX_NONE)
+		{
+			AddRigTurn(RigTail[0], TurnAround(NoseUp, -RigRear));
+		}
+	}
 
 	// ---- Head: looks around (the body's sway taken out), bobs with the steps, sniffs the air.
 	float LookYaw = HeadRotation.Yaw - Sway;
-	float LookPitch = HeadRotation.Pitch + RigNod - 2.5f * GaitMoving * FMath::Sin(4.f * PI * GaitCycle + 0.5f);
+	float LookPitch = HeadRotation.Pitch + RigNod - RigRear - 2.5f * GaitMoving * FMath::Sin(4.f * PI * GaitCycle + 0.5f);
 	bool bSniffing = false;
 	if (RigSettings.bSniffs)
 	{
@@ -837,6 +921,7 @@ void UAlienAppearanceComponent::UpdateRig(float DeltaSeconds, float TurnAlpha, f
 		}
 		FVector Target = Leg.Home + (Forward * Along + Up * Lift) * GaitMoving;
 		float Fold = Swing * GaitMoving;
+		float PawTurn = 0.f;
 		if (Airborne > 0.f)
 		{
 			// Leaping or held: front paws reach forward, hind legs stretch back - paddling when excited.
@@ -846,6 +931,16 @@ void UAlienAppearanceComponent::UpdateRig(float DeltaSeconds, float TurnAlpha, f
 				: Forward * (-0.13f + 0.05f * Paddle) + Up * (0.07f + 0.03f * Paddle);
 			Target = FMath::Lerp(Target, Leg.Home + Reach * H, Airborne);
 			Fold = FMath::Lerp(Fold, Leg.bFront ? 0.6f : 0.25f, Airborne);
+		}
+
+		if (!Leg.bFront)
+		{
+			Target += Forward * RigReachShift; // the hind paws step up with the body
+		}
+		else if (FrontReach > 0.001f)
+		{
+			Target = FMath::Lerp(Target, ReachWrist(Leg), FrontReach);
+			PawTurn = -70.f * FrontReach; // the pads against what it reaches
 		}
 
 		const int32 Parent = RigParents[Leg.Upper];
@@ -861,7 +956,7 @@ void UAlienAppearanceComponent::UpdateRig(float DeltaSeconds, float TurnAlpha, f
 		LowerSpace.SetRotation(TurnBetween(EndNow - LowerSpace.GetLocation(), Tip - LowerSpace.GetLocation()) * LowerSpace.GetRotation());
 		FTransform EndSpace = RigPose[Leg.End] * LowerSpace;
 		// The paw stays flat as it stood; swinging, a front paw folds back and a hind foot lifts its toes.
-		EndSpace.SetRotation(TurnAround(Right, (Leg.bFront ? 65.f : -15.f) * Fold) * RigRestSpace[Leg.End].GetRotation());
+		EndSpace.SetRotation(TurnAround(Right, (Leg.bFront ? 65.f : -15.f) * Fold + PawTurn) * RigRestSpace[Leg.End].GetRotation());
 		RigPose[Leg.Upper] = UpperSpace.GetRelativeTransform(ParentSpace);
 		RigPose[Leg.Lower] = LowerSpace.GetRelativeTransform(UpperSpace);
 		RigPose[Leg.End] = EndSpace.GetRelativeTransform(LowerSpace);

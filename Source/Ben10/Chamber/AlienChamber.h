@@ -214,6 +214,29 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Chamber")
 	bool IsRemoveArmed() const { return RemoveArmedTime > 0.f; }
 
+	// ---------- The glass ----------
+
+	/**
+	 * A knock on the glass at WorldPoint: it ripples from there, rings or knocks, and the alien inside answers.
+	 * Strength: 0 = a light fingertip tap .. 1 = a hard knock.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Chamber|Glass")
+	void TapGlass(const FVector& WorldPoint, float Strength);
+
+	/**
+	 * Where a point is relative to the glass walls: OutDistance = how far it is out of the nearest wall (world cm,
+	 * negative inside the case), OutNormal = that wall's outward normal, OutOnGlass = the nearest point on it.
+	 * False when the point is not beside a wall (above the lid, below the base, past a corner).
+	 */
+	UFUNCTION(BlueprintPure, Category = "Chamber|Glass")
+	bool GetGlassWallDistance(const FVector& WorldPoint, float& OutDistance, FVector& OutNormal, FVector& OutOnGlass) const;
+
+	/** Rings spreading over the glass from a point: a tap from outside, an alien banging it from inside. */
+	void RippleGlass(const FVector& WorldPoint, const FVector& Normal, float Strength, const FLinearColor& Color);
+
+	/** A mark on the inside of the glass that fades away (Upchuck's smear, Benwolf's breath). */
+	void MarkGlass(const FVector& WorldPoint, const FVector& Normal, float Size, const FLinearColor& Color, float Life, float Opacity = 0.5f);
+
 	// ---------- Grabbing (driven by AMuseumPawn) ----------
 
 	UFUNCTION(BlueprintCallable, Category = "Chamber|Grab")
@@ -484,6 +507,24 @@ private:
 	 */
 	void UpdateAmbience(bool bRestart);
 
+	/** A ring or mark on the glass: where it is (chamber space, so it moves with the case) and how it plays out. */
+	struct FGlassEffect
+	{
+		FVector LocalPoint = FVector::ZeroVector;
+		FVector LocalNormal = FVector::ForwardVector;
+		float Age = 0.f;
+		float Life = -1.f;      // < 0: free
+		float Delay = 0.f;
+		float Size0 = 1.f;
+		float Size1 = 1.f;
+		float Opacity = 0.7f;
+		bool bMark = false;
+	};
+
+	/** A free ring / mark slot (the oldest is reused when all are busy). */
+	int32 GetGlassEffectSlot(bool bMark);
+	void UpdateGlassEffects(float DeltaSeconds);
+
 	/** Inside half size of the glass in chamber space (X = depth, Y = width; a round pod uses its radius). */
 	FVector2f GetInnerHalfLocal() const;
 
@@ -532,6 +573,14 @@ private:
 
 	UPROPERTY(Transient)
 	TObjectPtr<UAudioComponent> AmbienceAudio;
+
+	UPROPERTY(Transient)
+	TArray<TObjectPtr<UStaticMeshComponent>> GlassEffectMeshes;
+
+	UPROPERTY(Transient)
+	TArray<TObjectPtr<UMaterialInstanceDynamic>> GlassEffectMIDs;
+
+	TArray<FGlassEffect> GlassEffects;
 
 	/** Basic shapes used to switch between the box and round look. */
 	UPROPERTY()

@@ -176,6 +176,17 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Museum")
 	float FloatDistanceSpeed = 120.f;
 
+	/**
+	 * A fingertip (hand tracking) or controller tip going into a case's glass at least this fast is a tap;
+	 * slower, it is a hand reaching in, not a knock.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Museum|Glass", meta = (Units = "cm/s"))
+	float TapMinSpeed = 25.f;
+
+	/** ...and this fast or faster, it is a hard knock (a startled alien). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Museum|Glass", meta = (Units = "cm/s"))
+	float TapKnockSpeed = 150.f;
+
 protected:
 	virtual void BeginPlay() override;
 
@@ -320,6 +331,19 @@ private:
 	void SetMode(EMuseumPawnMode NewMode);
 	void SetPlacementTarget(AAlienChamber* Chamber);
 
+	/** A hand's tap point near a case's glass: a tap is it going in through the glass, fast. */
+	struct FHandTap
+	{
+		TWeakObjectPtr<AAlienChamber> Chamber;
+		float LastDistance = 0.f;      // out of the glass last frame (cm, < 0 inside)
+		double LastTapTime = -10.0;
+		bool bHasLast = false;
+		bool bArmed = true;            // after going in, the tip has to come back out before it can tap again
+	};
+
+	void UpdateGlassTaps(float DeltaSeconds);
+	FHandTap& GetTap(const UMuseumHandInteractor* Hand);
+
 	FHandGrab& GetGrab(const UMuseumHandInteractor* Hand);
 	UMuseumHandInteractor* GetOtherHand(const UMuseumHandInteractor* Hand) const;
 	UMuseumHandInteractor* GetPointingHand() const;
@@ -348,6 +372,8 @@ private:
 	FHandAlien RightAlien;
 	FAlienPress LeftPress;
 	FAlienPress RightPress;
+	FHandTap LeftTap;
+	FHandTap RightTap;
 	TWeakObjectPtr<AAlienCharacter> TargetedAlien[2];
 	bool bTwoHandAlien = false;
 	float TwoHandAlienStartDistance = 1.f;

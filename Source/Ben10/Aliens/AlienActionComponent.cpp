@@ -7,6 +7,7 @@
 #include "Chamber/ChamberHabitatComponent.h"
 #include "Data/ChamberHabitatAsset.h"
 #include "Core/MuseumAssets.h"
+#include "Core/MuseumAudio.h"
 #include "Ben10.h"
 #include "Camera/PlayerCameraManager.h"
 #include "Components/CapsuleComponent.h"
@@ -98,6 +99,7 @@ void UAlienActionComponent::Setup(const UAlienDataAsset* Data)
 	WalkSpeed = Data->WalkSpeed;
 	bSpeedTrail = Data->bSpeedTrail;
 	bHovers = Data->bHovers;
+	TapStyle = Data->TapStyle;
 	if (Data->bHeadFlames)
 	{
 		BuildFlames();
@@ -186,6 +188,7 @@ void UAlienActionComponent::StopAction()
 	{
 		Body->EndPose();
 		Body->ClearActionTransform();
+		Body->ClearFrontReach();
 		Body->SetExtraLift(0.f);
 		Body->SetBodyVisible(true);
 		Body->StopClip(0.2f);
@@ -289,6 +292,7 @@ void UAlienActionComponent::TickComponent(float DeltaTime, ELevelTick TickType, 
 		case EAlienAction::Scurry: TickScurry(DeltaTime); break;
 		case EAlienAction::Fly: TickFly(DeltaTime); break;
 		case EAlienAction::Howl: TickHowl(DeltaTime); break;
+		case EAlienAction::GlassReact: TickGlassReact(DeltaTime); break;
 		}
 		if (bPerforming && ActionTime > 15.f)
 		{
@@ -354,7 +358,8 @@ void UAlienActionComponent::TickRoll(float Dt)
 			BallRadius = FMath::Max(4.f, FMath::Min(CapsuleRadius(), 0.42f * WorldHeight()));
 			BallSpin = Alien->GetActorQuat();
 			Ball->SetVisibility(true, true);
-			MoveDir = Rng.FRand() < 0.5f ? TowardViewer() : RandomFlat(Rng);
+			MoveDir = !ForcedDirection.IsNearlyZero() ? ForcedDirection : (Rng.FRand() < 0.5f ? TowardViewer() : RandomFlat(Rng));
+			ForcedDirection = FVector::ZeroVector;
 			Sfx(TEXT("Move.Roll.Curl"));
 		}
 		const float A = FMath::Min(1.f, StepTime / CurlTime);
@@ -1056,6 +1061,626 @@ void UAlienActionComponent::TickHowl(float Dt)
 			StopAction();
 		}
 		break;
+	default:
+		StopAction();
+		break;
+	}
+}
+
+// ---------------------------------------------------------------------------------------------
+// Glass reaction: someone tapped on the glass. It turns to the sound, comes over and answers in
+// character (TapStyle): Wildmutt sniffs and paws at it, Four Arms bangs back, Ripjaws snaps, Upchuck
+// smears his face on it... A hard knock startles it first; tapped again and again, it answers with
+// its show-off move.
+// ---------------------------------------------------------------------------------------------
+
+bool UAlienActionComponent::StartGlassReaction(const FVector& GlassPoint, const FVector& InGlassNormal, float Strength, EGlassMood Mood)
+{
+	if (!StartAction(EAlienAction::GlassReact))
+	{
+		return false;
+	}
+	SavedPoint = GlassPoint;
+	const FVector Flat = InGlassNormal.GetSafeNormal2D();
+	GlassNormal = Flat.IsNearlyZero() ? -Forward() : Flat;
+	GlassMood = Mood;
+	Amount = FMath::Clamp(Strength, 0.f, 1.f);
+	return true;
+}
+
+FVector UAlienActionComponent::GlassPointAtHeight(float Fraction) const
+{
+	const float H = WorldHeight();
+	const FVector Probe = Feet() + FVector(0.f, 0.f, H * Fraction) + GlassNormal * (CapsuleRadius() + 30.f * Alien->GetScaleFactor());
+	float Distance = 0.f;
+	FVector Normal;
+	FVector OnGlass;
+	const AAlienChamber* Case = GetChamber();
+	if (Case && Case->GetGlassWallDistance(Probe, Distance, Normal, OnGlass))
+	{
+		return OnGlass;
+	}
+	return FVector(SavedPoint.X, SavedPoint.Y, Feet().Z + H * Fraction);
+}
+
+void UAlienActionComponent::HitGlass(const FVector& Point, float Strength)
+{
+	if (AAlienChamber* Case = GetChamber())
+	{
+		Case->RippleGlass(Point, -GlassNormal, Strength, FMath::Lerp(ActionColor, FLinearColor::White, 0.3f)); // rings on the inside
+	}
+	if (UMuseumAudio* Audio = UMuseumAudio::Get(this))
+	{
+		Audio->PlayAt(Strength >= 0.6f ? TEXT("Glass.Knock") : TEXT("Glass.Tap"), Point, 0.35f + 0.6f * Strength); // the glass rings unmuffled
+	}
+}
+
+float UAlienActionComponent::GapToGlass(float Fraction) const
+{
+	const float S = Alien->GetScaleFactor();
+	const float Ahead = static_cast<float>(FVector::DotProduct(GlassPointAtHeight(Fraction) - Alien->GetActorLocation(), GlassNormal));
+	return FMath::Max(0.f, Ahead - Body->GetModelFront() * S - 1.f * S);
+}
+
+float UAlienActionComponent::FaceGapToGlass(FVector& OutOnGlass) const
+{
+	const float H = WorldHeight();
+	FVector Head;
+	if (Body->GetHeadBoneLocation(Head))
+	{
+		// A rigged head: the spot on the glass straight in front of it (a head need not sit over the body's
+		// centre), and the face (a snout) a little in front of its bone.
+		const FVector Ahead = GlassPointAtHeight(FMath::Clamp(static_cast<float>(Head.Z - Feet().Z) / FMath::Max(1.f, H), 0.f, 1.2f));
+		const float Distance = static_cast<float>(FVector::DotProduct(Ahead - Head, GlassNormal));
+		OutOnGlass = Head + GlassNormal * Distance;
+		return FMath::Max(0.f, Distance - 0.12f * H);
+	}
+	OutOnGlass = GlassPointAtHeight(0.8f);
+	return GapToGlass(0.8f);
+}
+
+float UAlienActionComponent::PawAtGlass(bool bEnter, const FVector& Along)
+{
+	// Blind Wildmutt finds the tap with his nose, then he is up on the glass like a dog at a window: both
+	// paws land on it, then scratch at it in turn, and he whines to be let out (snarls when annoyed).
+	const float H = WorldHeight();
+	const bool bAnnoyed = GlassMood == EGlassMood::Annoyed;
+	const int32 Cycles = bAnnoyed ? 2 : 1;       // scratches per paw
+	const float Period = bAnnoyed ? 0.42f : 0.5f; // one paw: off the glass, up, and down it again
+	const float UpTime = 0.6f;                    // both paws on the glass (after the sniff)
+	const float ScratchFrom = UpTime + 0.15f;
+	const float DownTime = ScratchFrom + Period * (Cycles + 0.5f);
+	if (bEnter)
+	{
+		Body->Sniff();
+		Sfx(TEXT("Move.Pounce.Sniff"), 0.8f);
+		Alien->SetExcited(true); // panting
+	}
+
+	// Up on the hind legs, and back down on all fours at the end.
+	float Reach = 0.f;
+	if (StepTime >= UpTime - 0.25f)
+	{
+		Reach = StepTime < UpTime ? EaseOut((StepTime - (UpTime - 0.25f)) / 0.25f)
+			: 1.f - EaseInOut(FMath::Clamp((StepTime - DownTime) / 0.3f, 0.f, 1.f));
+	}
+	// Each paw in turn comes off the glass, goes up and lands on it again, scratching down it.
+	const FVector Centre = GlassPointAtHeight(0.95f);
+	FVector Paws[2];
+	for (int32 Side = 0; Side < 2; ++Side)
+	{
+		const float U = (StepTime - ScratchFrom - Side * Period * 0.5f) / Period;
+		float Off = 0.f;
+		float Rise = -1.f;
+		if (U > 0.f && U < Cycles)
+		{
+			const float Cycle = FMath::Frac(U);
+			Off = Cycle < 0.5f ? FMath::Sin(Cycle * 2.f * PI) : 0.f;
+			Rise = -FMath::Cos(Cycle * 2.f * PI);
+		}
+		Paws[Side] = Centre + Along * ((Side == 0 ? 0.2f : -0.2f) * H) - GlassNormal * (0.14f * H * Off) + FVector(0.f, 0.f, 0.06f * H * Rise);
+	}
+	Body->SetFrontReach(Paws[0], Paws[1], Reach);
+
+	// The glass hears every paw: both landing, then each scratch.
+	const int32 Taps = 2 + 2 * Cycles;
+	while (Counter < Taps)
+	{
+		const float When = Counter < 2 ? UpTime + 0.06f * Counter : ScratchFrom + (Counter - 1) * Period * 0.5f;
+		if (StepTime < When)
+		{
+			break;
+		}
+		const int32 Side = Counter < 2 ? Counter : (Counter - 2) % 2;
+		HitGlass(Paws[Side], Counter < 2 ? 0.35f : bAnnoyed ? 0.4f : 0.25f);
+		if (Counter == 1)
+		{
+			Voice(bAnnoyed ? EAlienVoice::Alert : EAlienVoice::Held, bAnnoyed ? 1.f : 0.8f); // a snarl, or a whine
+		}
+		++Counter;
+	}
+	if (Counter == Taps && StepTime >= DownTime + 0.28f)
+	{
+		++Counter;
+		if (UAlienSoundComponent* Sounds = Alien->GetSounds())
+		{
+			Sounds->PlayFootstep(0.9f); // front paws back on the ground
+		}
+	}
+	return DownTime + 0.45f;
+}
+
+void UAlienActionComponent::TickGlassReact(float Dt)
+{
+	const bool bEnter = Entering();
+	const float H = WorldHeight();
+	const float S = Alien->GetScaleFactor();
+	AAlienChamber* Case = GetChamber();
+	UAlienSoundComponent* Sounds = Alien->GetSounds();
+	if (!Case)
+	{
+		StopAction();
+		return;
+	}
+	const bool bAnnoyed = GlassMood == EGlassMood::Annoyed;
+	const FVector Along = FVector::CrossProduct(GlassNormal, FVector::UpVector).GetSafeNormal(); // across the glass
+
+	// Stinkfly flies up to where the knock was.
+	auto RiseToTap = [this, H, S, Case, Dt]()
+	{
+		const float Room = FMath::Max(0.f, static_cast<float>(Case->GetInnerSize().Z) * Case->GetChamberScale() - H - 4.f * S);
+		const float Lift = FMath::Clamp(static_cast<float>(SavedPoint.Z - Feet().Z) - H * 0.5f, 0.f, Room);
+		Body->SetExtraLift(FMath::FInterpTo(Body->GetExtraLift(), Lift / S, Dt, 4.f));
+	};
+
+	switch (Step)
+	{
+	case 0: // the head snaps to the sound
+	{
+		const bool bStartled = GlassMood == EGlassMood::Startled;
+		const float Duration = bStartled ? 0.6f : 0.35f;
+		if (bEnter)
+		{
+			Alien->SetLookTarget(SavedPoint);
+			Alien->TurnToward(SavedPoint);
+			if (bStartled)
+			{
+				Voice(EAlienVoice::Alert);
+				Body->PlayClip(EAlienClip::Hit, false, 0.08f); // a model with a flinch of its own (Benwolf) uses it
+				if (!bHovers)
+				{
+					// Grey Matter jumps out of his skin; the others flinch with a little hop.
+					const float Jump = TapStyle == EAlienTapStyle::Inspect ? 170.f : 90.f;
+					Alien->LaunchCharacter(FVector(0.f, 0.f, Jump * FMath::Sqrt(S)), false, true);
+				}
+			}
+			else if (bAnnoyed)
+			{
+				Voice(EAlienVoice::Effort);
+			}
+			else if (Rng.FRand() < 0.6f)
+			{
+				Voice(EAlienVoice::Alert, 0.6f);
+			}
+		}
+		const float A = FMath::Min(1.f, StepTime / Duration);
+		if (bStartled)
+		{
+			const float Flinch = Bell(A);
+			Body->SetActionTransform(FVector(1.f + 0.06f * Flinch, 1.f + 0.06f * Flinch, 1.f - 0.12f * Flinch), FRotator(8.f * Flinch, 0.f, 0.f));
+		}
+		else
+		{
+			Body->SetActionTransform(FVector::OneVector, FRotator(0.f, 0.f, 10.f * Bell(A))); // a curious tilt
+		}
+		if (A < 1.f)
+		{
+			break;
+		}
+		Body->ClearActionTransform();
+		const bool bOwnAnswer = TapStyle == EAlienTapStyle::Paw || TapStyle == EAlienTapStyle::Bang
+			|| TapStyle == EAlienTapStyle::Snap || TapStyle == EAlienTapStyle::Bump;
+		if (bAnnoyed && !bOwnAnswer && Actions.Num() > 0)
+		{
+			// Enough: its show-off move (Echo Echo screams, Diamondhead bursts crystals, Ghostfreak phases...).
+			const EAlienAction Answer = Actions[0];
+			StopAction();
+			StartAction(Answer);
+			return;
+		}
+		if (TapStyle == EAlienTapStyle::Growl && GlassMood != EGlassMood::Curious)
+		{
+			StopAction();
+			StartAction(EAlienAction::Howl); // a hard knock gets a howl back
+			return;
+		}
+		if (TapStyle == EAlienTapStyle::Roll)
+		{
+			ForcedDirection = (SavedPoint - Alien->GetActorLocation()).GetSafeNormal2D();
+			StopAction();
+			if (!StartAction(EAlienAction::Roll))
+			{
+				ForcedDirection = FVector::ZeroVector;
+			}
+			return;
+		}
+		NextStep();
+		break;
+	}
+	case 1: // over to the glass where it was tapped
+	{
+		if (bEnter)
+		{
+			TargetPoint = Case->ClampToMovementBounds(SavedPoint, CapsuleRadius() + 1.5f * S);
+			TargetPoint.Z = Alien->GetActorLocation().Z;
+			float Speed = 1.4f;
+			if (TapStyle == EAlienTapStyle::Rush)
+			{
+				Speed = FMath::Max(4.f, 200.f / FMath::Max(5.f, WalkSpeed)); // XLR8 is simply there
+			}
+			else if (TapStyle == EAlienTapStyle::Paw || TapStyle == EAlienTapStyle::Snap || TapStyle == EAlienTapStyle::Bang)
+			{
+				Speed = bAnnoyed ? 2.2f : 1.8f;
+			}
+			else if (TapStyle == EAlienTapStyle::Face)
+			{
+				Speed = 2.f; // a ghost glides straight over
+			}
+			Alien->SetSpeedMultiplier(Speed);
+			Alien->MoveToPoint(TargetPoint, 1.f);
+			if (TapStyle == EAlienTapStyle::Bump)
+			{
+				SetGhost(true); // flies over the props
+				if (Sounds)
+				{
+					Sounds->SetLoopBoost(2.2f, 1.15f);
+				}
+			}
+		}
+		Alien->SetLookTarget(SavedPoint);
+		if (TapStyle == EAlienTapStyle::Rush)
+		{
+			Timer += Dt;
+			if (Timer >= 0.045f)
+			{
+				Timer = 0.f;
+				SpawnAfterImage(0.45f, 0.2f);
+			}
+		}
+		if (TapStyle == EAlienTapStyle::Bump)
+		{
+			RiseToTap();
+		}
+		const bool bThere = FVector::Dist2D(Alien->GetActorLocation(), TargetPoint) <= FMath::Max(3.f * S, CapsuleRadius() * 0.35f);
+		if (bThere || !Alien->IsMoving() || Alien->IsStuck() || StepTime > 3.f)
+		{
+			Alien->StopMoving();
+			Alien->SetSpeedMultiplier(1.f);
+			Alien->TurnToward(SavedPoint);
+			Counter = 0;
+			Timer = 0.f;
+			NextStep();
+		}
+		break;
+	}
+	case 2: // at the glass: its answer
+	{
+		Alien->SetLookTarget(SavedPoint);
+		float Length = 1.4f;
+		switch (TapStyle)
+		{
+		case EAlienTapStyle::Paw: // Wildmutt: a sniff, then up on his hind legs with his front paws on the glass
+			if (Body->CanReachFront())
+			{
+				Length = PawAtGlass(bEnter, Along);
+				break;
+			}
+			[[fallthrough]]; // a body that can't reach up lunges at the glass instead
+		case EAlienTapStyle::Bang: // Four Arms: bangs it back and the glass shudders
+		case EAlienTapStyle::Snap: // Ripjaws: lunges and snaps his jaws
+		{
+			const bool bPaw = TapStyle == EAlienTapStyle::Paw;
+			const int32 Strikes = bPaw ? (bAnnoyed ? 3 : 2) : (bAnnoyed ? 2 : 1);
+			const float First = bPaw ? 0.55f : 0.35f;
+			const float Gap = bPaw ? 0.32f : 0.5f;
+			const float StrikeHeight = bPaw ? 0.45f : TapStyle == EAlienTapStyle::Snap ? 0.85f : 0.72f; // paw, jaws, fists
+			// Lunging at the glass: a body that tips forward from its feet gets part of the way by leaning.
+			const float Tip = bPaw ? 16.f : -8.f;
+			const float LeanReach = Body->IsRigged() || bPaw ? 0.f : StrikeHeight * H * FMath::Sin(FMath::DegreesToRadians(-Tip));
+			const float MaxLunge = 0.5f * H;
+			if (bEnter)
+			{
+				if (bPaw)
+				{
+					Sfx(TEXT("Move.Pounce.Sniff"), 0.8f);
+				}
+				else
+				{
+					Voice(TapStyle == EAlienTapStyle::Snap ? EAlienVoice::Alert : EAlienVoice::Effort);
+				}
+				Body->PlayClip(EAlienClip::Attack, false, 0.1f);
+				GlassGap = FMath::Max(0.f, GapToGlass(StrikeHeight) - LeanReach);
+			}
+			// Every strike: fast into the glass (the hit at the peak), slower back.
+			const float Start = First - Gap * 0.5f;
+			const bool bStriking = StepTime >= Start && StepTime < Start + Gap * Strikes;
+			const float Phase = bStriking ? FMath::Fmod(StepTime - Start, Gap) / Gap : 0.f;
+			const float Reach = !bStriking ? 0.f : Phase < 0.5f ? FMath::Square(Phase / 0.5f) : 1.f - EaseInOut((Phase - 0.5f) / 0.5f);
+			Body->SetActionTransform(FVector(1.f, 1.f, 1.f + 0.04f * Reach), FRotator(Tip * Reach, 0.f, 0.f), FVector(FMath::Min(GlassGap, MaxLunge) * Reach, 0.f, 0.f));
+			if (Counter < Strikes && StepTime >= First + Gap * Counter)
+			{
+				++Counter;
+				const float Force = TapStyle == EAlienTapStyle::Bang ? (bAnnoyed ? 1.f : 0.85f) : TapStyle == EAlienTapStyle::Snap ? 0.5f : 0.35f;
+				if (GlassGap <= MaxLunge) // blocked further back, it strikes at the air
+				{
+					HitGlass(GlassPointAtHeight(StrikeHeight) + Along * (Rng.FRandRange(-0.08f, 0.08f) * H), Force);
+				}
+				if (TapStyle == EAlienTapStyle::Snap)
+				{
+					Voice(EAlienVoice::Alert, 0.8f);
+				}
+				else if (TapStyle == EAlienTapStyle::Bang)
+				{
+					Blast(Feet(), H * 2.f, 90.f * S, FVector::ZeroVector, 0.5f); // the props jump
+				}
+			}
+			Length = First + Gap * Strikes + 0.3f;
+			break;
+		}
+		case EAlienTapStyle::Face:  // Ghostfreak: his face right up to the glass, whispering
+		case EAlienTapStyle::Smear: // Upchuck: squishes his face on it and leaves a smear
+		{
+			const bool bSmear = TapStyle == EAlienTapStyle::Smear;
+			if (bEnter)
+			{
+				GlassGap = FaceGapToGlass(TargetPoint);
+			}
+			const float MaxLean = 0.4f * H;
+			const bool bReaches = GlassGap <= MaxLean;
+			const float Duration = bSmear ? 2.1f : 2.4f;
+			const float T = StepTime / Duration;
+			// In until the face is on the glass - a ghost's comes on through it - a moment there, then back.
+			const float Lean = T < 0.3f ? EaseInOut(T / 0.3f) : T < 0.72f ? 1.f : 1.f - EaseInOut((T - 0.72f) / 0.28f);
+			const float Through = bReaches && !bSmear ? 0.1f * H : 0.f;
+			const float Front = Body->GetModelFront() * S;
+			if (bSmear)
+			{
+				// Squashed flat on it (shorter front to back, a bit wider), rubbing it about.
+				const float Rub = bReaches && T >= 0.3f && T < 0.72f ? FMath::Sin((StepTime - 0.3f * Duration) * 2.f * PI * 2.f) : 0.f;
+				Body->SetActionTransform(FVector(1.f - 0.08f * Lean, 1.f + 0.05f * Lean, 1.f - 0.03f * Lean), FRotator(0.f, 6.f * Rub, 0.f),
+					FVector((FMath::Min(GlassGap, MaxLean) + (bReaches ? 0.08f * Front : 0.f)) * Lean, 0.f, 0.f));
+			}
+			else
+			{
+				Body->SetActionTransform(FVector::OneVector, FRotator::ZeroRotator, FVector((FMath::Min(GlassGap, MaxLean) + Through) * Lean, 0.f, 0.f));
+			}
+			if (Counter == 0 && T >= 0.3f)
+			{
+				Counter = 1;
+				if (bReaches)
+				{
+					HitGlass(TargetPoint, 0.15f);
+					if (bSmear)
+					{
+						Case->MarkGlass(TargetPoint, GlassNormal, H * 0.32f, FLinearColor(0.55f, 1.f, 0.12f), 9.f, 0.6f);
+					}
+				}
+				Voice(EAlienVoice::Call, 0.8f); // a whisper, a laugh; a gurgle
+			}
+			Length = Duration;
+			break;
+		}
+		case EAlienTapStyle::Inspect: // Grey Matter: studies the spot, head tilting one way, then the other
+		{
+			if (bEnter)
+			{
+				Voice(EAlienVoice::Call, 0.8f);
+			}
+			const float Tilt = FMath::Sin(StepTime / 1.8f * 2.f * PI) * Bell(FMath::Min(1.f, StepTime / 1.8f));
+			Body->SetActionTransform(FVector::OneVector, FRotator(-6.f * Bell(FMath::Min(1.f, StepTime / 1.8f)), 0.f, 14.f * Tilt));
+			Length = 1.8f;
+			break;
+		}
+		case EAlienTapStyle::Rush: // XLR8: taps back, twice, before you can blink
+		{
+			if (Counter < 2 && StepTime >= 0.2f + 0.14f * Counter)
+			{
+				++Counter;
+				// Right where you tapped, if he can reach that high: he mirrors you.
+				const float Reachable = FMath::Clamp(static_cast<float>(SavedPoint.Z - Feet().Z) / FMath::Max(1.f, H), 0.35f, 0.9f);
+				const FVector Spot = GlassPointAtHeight(Reachable);
+				const FVector Yours = SavedPoint - GlassNormal * static_cast<float>(FVector::DotProduct(SavedPoint - Spot, GlassNormal));
+				HitGlass(FVector(Yours.X, Yours.Y, Spot.Z) + Along * (Counter == 1 ? -0.03f : 0.03f) * H, 0.2f);
+			}
+			if (Counter == 2 && StepTime >= 0.55f)
+			{
+				Counter = 3;
+				Voice(EAlienVoice::Call, 0.8f);
+			}
+			Length = 1.f;
+			break;
+		}
+		case EAlienTapStyle::Circuits: // Upgrade: green circuit lines race across the glass from the spot
+		{
+			if (bEnter)
+			{
+				Voice(EAlienVoice::Call);
+			}
+			if (Counter == 0 && StepTime >= 0.25f)
+			{
+				Counter = 1;
+				const FVector From = SavedPoint - GlassNormal * 0.6f * S;
+				Case->RippleGlass(SavedPoint, -GlassNormal, 0.6f, ActionColor);
+				for (int32 k = 0; k < 10; ++k)
+				{
+					const float Angle = FMath::DegreesToRadians(k * 36.f + Rng.FRandRange(-12.f, 12.f));
+					const FVector Dir = (Along * FMath::Cos(Angle) + FVector::UpVector * FMath::Sin(Angle)).GetSafeNormal();
+					const float LineLength = Rng.FRandRange(6.f, 15.f) * S;
+					const int32 Index = SpawnFx(EFx::Cube, From, FRotationMatrix::MakeFromZX(Dir, GlassNormal).ToQuat(),
+						FVector(0.5f * S, 0.25f * S, 0.5f * S), FVector(0.5f * S, 0.25f * S, LineLength), ActionColor, 1.4f, 0.9f, 2.4f);
+					if (FxStates.IsValidIndex(Index))
+					{
+						FxStates[Index].bFromBase = true; // grows out from the tapped spot
+						FxStates[Index].Base = From;
+					}
+				}
+			}
+			Length = 1.6f;
+			break;
+		}
+		case EAlienTapStyle::Bump: // Stinkfly: buzzes against the glass like a bug at a window
+		{
+			RiseToTap();
+			const int32 Bumps = bAnnoyed ? 5 : 3;
+			const float Gap = bAnnoyed ? 0.24f : 0.35f;
+			const float Phase = FMath::Fmod(FMath::Max(0.f, StepTime - 0.15f), Gap) / Gap;
+			const bool bBumping = StepTime >= 0.15f && StepTime < 0.15f + Gap * Bumps;
+			Body->SetActionTransform(FVector::OneVector, FRotator(bBumping ? -14.f * FMath::Sin(Phase * PI) : 0.f, 0.f, 0.f));
+			if (Counter < Bumps && StepTime >= 0.15f + Gap * (Counter + 0.5f))
+			{
+				++Counter;
+				HitGlass(FVector(SavedPoint.X, SavedPoint.Y, Feet().Z + Body->GetExtraLift() * S + H * 0.55f) + Along * Rng.FRandRange(-0.1f, 0.1f) * H, 0.2f);
+			}
+			Length = 0.15f + Gap * Bumps + 0.2f;
+			break;
+		}
+		case EAlienTapStyle::Echo: // Echo Echo: a little sonic ring against the glass
+		{
+			if (bEnter)
+			{
+				Voice(EAlienVoice::Alert);
+				const FVector From = Feet() + FVector(0.f, 0.f, H * 0.7f);
+				const FVector Dir = (GlassPointAtHeight(0.7f) - From).GetSafeNormal();
+				const float Distance = static_cast<float>(FVector::Dist(GlassPointAtHeight(0.7f), From));
+				const float Speed = 90.f * S;
+				EventTime = FMath::Clamp(Distance / Speed, 0.1f, 0.8f);
+				const int32 Index = SpawnFx(EFx::Ring, From, UpAlong(Dir), FVector(H * 0.1f), FVector(H * 0.5f),
+					FMath::Lerp(ActionColor, FLinearColor::White, 0.35f), EventTime, 0.85f, 2.6f);
+				if (FxStates.IsValidIndex(Index))
+				{
+					FxStates[Index].Velocity = Dir * Speed;
+				}
+			}
+			if (Counter == 0 && StepTime >= EventTime)
+			{
+				Counter = 1;
+				HitGlass(GlassPointAtHeight(0.7f), 0.45f);
+			}
+			Length = 1.2f;
+			break;
+		}
+		case EAlienTapStyle::Crystal: // Diamondhead: a little crystal grows on the glass where you tapped
+		{
+			if (Counter == 0 && StepTime >= 0.3f)
+			{
+				Counter = 1;
+				Sfx(TEXT("Move.Crystal.Charge"), 0.7f);
+				Case->RippleGlass(SavedPoint, -GlassNormal, 0.4f, ActionColor);
+				for (int32 k = 0; k < 3; ++k)
+				{
+					const FVector Axis = (-GlassNormal + FVector(0.f, 0.f, Rng.FRandRange(-0.4f, 0.6f)) + Along * Rng.FRandRange(-0.5f, 0.5f)).GetSafeNormal();
+					const float Tall = H * Rng.FRandRange(0.1f, 0.2f);
+					const float Wide = Tall * 0.32f;
+					const FVector Base = SavedPoint - GlassNormal * 0.5f * S + Along * Rng.FRandRange(-2.f, 2.f) * S + FVector(0.f, 0.f, Rng.FRandRange(-2.f, 2.f) * S);
+					const int32 Index = SpawnFx(EFx::Cone, Base, UpAlong(Axis), FVector(Wide, Wide, Tall), FVector(Wide, Wide, Tall), ActionColor, 2.2f, 0.85f, 2.2f);
+					if (FxStates.IsValidIndex(Index))
+					{
+						FxStates[Index].bPop = true;
+						FxStates[Index].bFromBase = true;
+						FxStates[Index].Base = Base;
+					}
+				}
+			}
+			Length = 1.6f;
+			break;
+		}
+		case EAlienTapStyle::Vine: // Wildvine: a vine reaches out and taps back
+		{
+			if (bEnter)
+			{
+				EnsureVines();
+				VineTargets.Reset();
+				VineTargets.Add(SavedPoint - GlassNormal * 0.8f * S);
+			}
+			const float Grow = StepTime < 0.4f ? EaseOut(StepTime / 0.4f) : StepTime < 0.9f ? 1.f : 1.f - EaseInOut((StepTime - 0.9f) / 0.4f);
+			UpdateVines(Grow);
+			if (Counter == 0 && StepTime >= 0.42f)
+			{
+				Counter = 1;
+				HitGlass(SavedPoint, 0.3f);
+				Sfx(TEXT("Move.Vine.Lash"), 0.6f);
+			}
+			Length = 1.35f;
+			break;
+		}
+		case EAlienTapStyle::Clones: // Ditto: and here come his clones too
+			StopAction();
+			StartAction(EAlienAction::Clone);
+			return;
+		case EAlienTapStyle::Growl:   // Benwolf (a light tap): ears up, a low growl
+		case EAlienTapStyle::Curious:
+		default:
+		{
+			const bool bGrowl = TapStyle == EAlienTapStyle::Growl;
+			if (bEnter)
+			{
+				GlassGap = FaceGapToGlass(TargetPoint);
+				if (bGrowl || Rng.FRand() < 0.5f)
+				{
+					Voice(EAlienVoice::Call, 0.8f); // Benwolf: a low growl, or a sniff
+				}
+			}
+			// Nose up to the glass (a curious one only halfway), a moment, back.
+			const float MaxLean = 0.35f * H;
+			const float Duration = bGrowl ? 2.f : 1.5f;
+			const float T = StepTime / Duration;
+			const float Lean = T < 0.3f ? EaseInOut(T / 0.3f) : T < 0.7f ? 1.f : 1.f - EaseInOut((T - 0.7f) / 0.3f);
+			const float Reach = FMath::Min(GlassGap, MaxLean) * (bGrowl ? 1.f : 0.5f);
+			Body->SetActionTransform(FVector::OneVector, FRotator(-6.f * Lean, 0.f, 0.f), FVector(Reach * Lean, 0.f, 0.f));
+			if (bGrowl && Counter == 0 && T >= 0.3f)
+			{
+				Counter = 1;
+				if (GlassGap <= MaxLean)
+				{
+					Case->MarkGlass(TargetPoint, GlassNormal, 0.2f * H, FLinearColor(0.6f, 0.65f, 0.7f), 3.5f, 0.28f); // his breath fogs it
+				}
+			}
+			Length = Duration;
+			break;
+		}
+		}
+		if (StepTime >= Length)
+		{
+			Body->ClearActionTransform();
+			NextStep();
+		}
+		break;
+	}
+	case 3: // a look at whoever tapped, then back to its day
+	{
+		if (bEnter)
+		{
+			FVector Viewer;
+			if (GetViewer(Viewer))
+			{
+				Alien->SetLookTarget(Viewer);
+			}
+			Body->ClearActionTransform();
+			if (Sounds)
+			{
+				Sounds->SetLoopBoost(1.f, 1.f);
+			}
+		}
+		if (TapStyle == EAlienTapStyle::Bump)
+		{
+			Body->SetExtraLift(FMath::FInterpTo(Body->GetExtraLift(), 0.f, Dt, 3.f));
+		}
+		if (StepTime >= 1.2f)
+		{
+			StopAction();
+		}
+		break;
+	}
 	default:
 		StopAction();
 		break;

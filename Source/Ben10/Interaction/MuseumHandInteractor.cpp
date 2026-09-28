@@ -7,11 +7,13 @@
 #include "Camera/PlayerCameraManager.h"
 #include "Components/StaticMeshComponent.h"
 #include "Engine/World.h"
+#include "GameFramework/PlayerController.h"
 #include "HeadMountedDisplayFunctionLibrary.h"
 #include "HeadMountedDisplayTypes.h"
 #include "Kismet/GameplayStatics.h"
 #include "Materials/MaterialInstanceDynamic.h"
 #include "MotionControllerComponent.h"
+#include "TimerManager.h"
 
 UMuseumHandInteractor::UMuseumHandInteractor()
 {
@@ -128,6 +130,9 @@ bool UMuseumHandInteractor::UpdateFromHandTracking()
 
 	// Grab point: the palm inside a fist, else between thumb and index. Set before the events fire.
 	GrabLocation = bFist ? Palm : (ThumbTip + IndexTip) * 0.5f;
+	// Taps come from the fingertip; a pinch or a fist is busy selecting or grabbing.
+	TapPoint = IndexTip;
+	bHasTapPoint = !bFist && !bPinching;
 	SetSelectState(bPinching);
 	SetGrabState(bFist);
 	return true;
@@ -144,6 +149,9 @@ bool UMuseumHandInteractor::UpdateFromController()
 	const bool bGripTracked = GripController && GripController->IsTracked();
 	GrabLocation = bGripTracked ? GripController->GetComponentLocation() : AimOrigin;
 	GrabRotation = bGripTracked ? GripController->GetComponentQuat() : AimController->GetComponentQuat();
+	// The aim pose sits at the front of the controller: its tip knocks on glass.
+	TapPoint = AimOrigin + AimDirection * 1.5f;
+	bHasTapPoint = true;
 	SetSelectState(bControllerSelect);
 	SetGrabState(bControllerGrab);
 	return true;
@@ -178,6 +186,10 @@ void UMuseumHandInteractor::TickComponent(float DeltaTime, ELevelTick TickType, 
 		bPinching = false;
 		bFist = false;
 	}
+	if (NewSource == EMuseumHandSource::None || NewSource == EMuseumHandSource::Desktop)
+	{
+		bHasTapPoint = false;
+	}
 	Source = NewSource;
 
 	if (Source == EMuseumHandSource::None)
@@ -193,6 +205,24 @@ void UMuseumHandInteractor::TickComponent(float DeltaTime, ELevelTick TickType, 
 	}
 	UpdateVisuals();
 	bHasLaserOverride = false;
+}
+
+void UMuseumHandInteractor::PulseHaptics(float Amplitude, float Duration)
+{
+	APlayerController* Player = UGameplayStatics::GetPlayerController(this, 0);
+	UWorld* World = GetWorld();
+	if (!Player || !World || Source != EMuseumHandSource::Controller)
+	{
+		return;
+	}
+	Player->SetHapticsByValue(1.f, FMath::Clamp(Amplitude, 0.f, 1.f), Hand);
+	World->GetTimerManager().SetTimer(HapticTimer, FTimerDelegate::CreateWeakLambda(this, [this]()
+	{
+		if (APlayerController* Owner = UGameplayStatics::GetPlayerController(this, 0))
+		{
+			Owner->SetHapticsByValue(0.f, 0.f, Hand);
+		}
+	}), FMath::Max(0.01f, Duration), false);
 }
 
 void UMuseumHandInteractor::UpdatePointer()

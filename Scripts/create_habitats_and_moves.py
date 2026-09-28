@@ -205,6 +205,12 @@ def alien_key(asset_name):
     return parts[0] if len(parts) > 1 and parts[-1].isdigit() else stem
 
 
+# How each alien answers a tap on its glass (UAlienDataAsset::TapStyle; three taps in a row get its show-off move).
+TAP = {"Wildmutt": "PAW", "Ghostfreak": "FACE", "Benwolf": "GROWL", "FourArms": "BANG", "GreyMatter": "INSPECT",
+       "XLR8": "RUSH", "Upgrade": "CIRCUITS", "Stinkfly": "BUMP", "Ripjaws": "SNAP", "Cannonbolt": "ROLL",
+       "Upchuck": "SMEAR", "Ditto": "CLONES", "EchoEcho": "ECHO", "Diamondhead": "CRYSTAL", "Wildvine": "VINE"}
+
+
 def apply_moves(da, habitats, poses, ball_mesh):
     key = alien_key(da.get_name())
     if key not in MOVES:
@@ -217,6 +223,7 @@ def apply_moves(da, habitats, poses, ball_mesh):
     da.set_editor_property("action_chance", float(chance))
     da.set_editor_property("head_flames", extras.get("head_flames", False))
     da.set_editor_property("speed_trail", extras.get("speed_trail", False))
+    da.set_editor_property("tap_style", getattr(unreal.AlienTapStyle, TAP.get(key, "CURIOUS")))
     for prop_name in ("walk_speed", "energy"):
         if prop_name in extras:
             da.set_editor_property(prop_name, extras[prop_name])

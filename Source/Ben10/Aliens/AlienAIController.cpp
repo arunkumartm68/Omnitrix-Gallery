@@ -36,6 +36,35 @@ void AAlienAIController::NotifyHeld(bool bHeld)
 	EnterState(bHeld ? EAlienState::Held : EAlienState::Idle);
 }
 
+void AAlienAIController::NotifyGlassTap(const FVector& GlassPoint, const FVector& GlassNormal, float Strength)
+{
+	UAlienActionComponent* Moves = Alien ? Alien->GetActions() : nullptr;
+	if (!Moves || State == EAlienState::Held || Alien->IsOutOfCase())
+	{
+		return;
+	}
+	const double Now = GetWorld()->GetTimeSeconds();
+	TapTimes.RemoveAll([Now](double When) { return Now - When > 6.0; });
+	TapTimes.Add(Now);
+	const EGlassMood Mood = TapTimes.Num() >= 3 ? EGlassMood::Annoyed : Strength >= 0.55f ? EGlassMood::Startled : EGlassMood::Curious;
+
+	// In the middle of a move of its own it only glances over; its answer to an earlier tap carries on
+	// unless this one is the tap too many.
+	if (Moves->IsPerforming() && (Moves->GetCurrentAction() != EAlienAction::GlassReact || Mood != EGlassMood::Annoyed))
+	{
+		Alien->SetLookTarget(GlassPoint);
+		return;
+	}
+	if (Moves->StartGlassReaction(GlassPoint, GlassNormal, Strength, Mood))
+	{
+		if (Mood == EGlassMood::Annoyed)
+		{
+			TapTimes.Reset(); // it has answered: the count starts again
+		}
+		EnterState(EAlienState::Performing);
+	}
+}
+
 void AAlienAIController::Tick(float DeltaSeconds)
 {
 	Super::Tick(DeltaSeconds);

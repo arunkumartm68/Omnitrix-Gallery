@@ -39,7 +39,31 @@ enum class EAlienAction : uint8
 	Melt UMETA(ToolTip = "Melts into the floor and re-forms somewhere else (Upgrade)"),
 	Scurry UMETA(ToolTip = "Quick tiny zig-zag scurry with hops (Grey Matter)"),
 	Fly UMETA(ToolTip = "Takes off and circles around the case (Stinkfly)"),
-	Howl UMETA(ToolTip = "Winds up, opens its jaw wide and blasts sonic rings at the visitor (Benwolf; plays the model's Special clips when it has them)")
+	Howl UMETA(ToolTip = "Winds up, opens its jaw wide and blasts sonic rings at the visitor (Benwolf; plays the model's Special clips when it has them)"),
+	/** Not a signature move: how it answers a tap on its glass (UAlienDataAsset::TapStyle). */
+	GlassReact UMETA(Hidden)
+};
+
+/** How an alien answers a tap on its case's glass: it turns to the sound, comes over, and then... */
+UENUM(BlueprintType)
+enum class EAlienTapStyle : uint8
+{
+	Curious UMETA(ToolTip = "...looks closely at where you tapped"),
+	Paw UMETA(ToolTip = "...sniffs and paws at the glass (Wildmutt)"),
+	Face UMETA(ToolTip = "...presses its face to the glass and whispers (Ghostfreak)"),
+	Growl UMETA(ToolTip = "...growls; a hard knock gets a howl back (Benwolf)"),
+	Bang UMETA(ToolTip = "...bangs the glass back so it shudders (Four Arms)"),
+	Inspect UMETA(ToolTip = "...jumps when startled, then inspects the spot, head tilting (Grey Matter)"),
+	Rush UMETA(ToolTip = "...is at the glass instantly and taps back (XLR8)"),
+	Circuits UMETA(ToolTip = "...sends green circuits across the glass from the spot (Upgrade)"),
+	Bump UMETA(ToolTip = "...buzzes against the glass like a bug at a window (Stinkfly)"),
+	Snap UMETA(ToolTip = "...lunges and snaps its jaws at you (Ripjaws)"),
+	Roll UMETA(ToolTip = "...curls up and rolls into the glass (Cannonbolt)"),
+	Smear UMETA(ToolTip = "...presses its face to the glass and leaves a smear (Upchuck)"),
+	Clones UMETA(ToolTip = "...and its clones rush over too (Ditto)"),
+	Echo UMETA(ToolTip = "...answers with a sonic ring against the glass (Echo Echo)"),
+	Crystal UMETA(ToolTip = "...grows a little crystal on the glass where you tapped (Diamondhead)"),
+	Vine UMETA(ToolTip = "...reaches a vine out and taps back (Wildvine)")
 };
 
 /** One of an animated model's own animations (UAlienDataAsset::Clips). */
@@ -602,6 +626,13 @@ public:
 	/** Chance to come to the glass when the player walks up. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Behaviour", meta = (ClampMin = 0, ClampMax = 1))
 	float Curiosity = 0.7f;
+
+	/**
+	 * How it answers a tap on its glass (see EAlienTapStyle). A light tap makes it curious, a hard knock
+	 * startles it, and three taps in a row annoy it - then it answers with its show-off move.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Behaviour")
+	EAlienTapStyle TapStyle = EAlienTapStyle::Curious;
 
 	/** Distance at which the alien notices the player's head. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Behaviour", meta = (Units = "cm"))

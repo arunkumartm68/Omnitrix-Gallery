@@ -64,6 +64,9 @@ public:
 	/** Approximate horizontal radius of the model at scale 1 (cm). */
 	float GetModelRadius() const { return ModelRadius; }
 
+	/** How far the body reaches forward of its centre (cm at scale 1): its chest, its snout. */
+	float GetModelFront() const { return ModelFront > 0.f ? ModelFront : ModelRadius; }
+
 	/** Radius for the collision capsule at scale 1 (cm). */
 	float GetCollisionRadius() const { return CollisionRadius; }
 
@@ -117,6 +120,19 @@ public:
 
 	/** World position of the rig's head bone (false when the body has no rigged head). */
 	bool GetHeadBoneLocation(FVector& OutLocation) const;
+
+	/**
+	 * Up on the hind legs with the front paws / hands on two points in the world (Wildmutt's paws on the
+	 * glass): Weight 0 stands and walks as usual, 1 has each front leg reach for its point, the body pitched
+	 * up around the hips and stepping forward as far as the paws need. Rigged bodies with front legs only
+	 * (see CanReachFront).
+	 */
+	void SetFrontReach(const FVector& LeftPoint, const FVector& RightPoint, float Weight);
+	void ClearFrontReach() { FrontReachWeight = 0.f; }
+	bool CanReachFront() const;
+
+	/** A sniff now (nose up, quick short sniffs), if the rig sniffs. */
+	void Sniff();
 
 	/** Shows a second pose of the model (same scale, feet on the ground) until EndPose(). */
 	bool ShowPose(UStaticMesh* PoseMesh);
@@ -257,7 +273,9 @@ private:
 		float UpperLength = 1.f;
 		float LowerLength = 1.f;
 		float Phase = 0.f;
+		float PawLength = 1.f;               // wrist above the ground in the rest pose
 		bool bFront = false;
+		bool bLeft = false;
 	};
 	FAlienRig RigSettings;
 	TArray<FRigLeg> RigLegs;
@@ -284,6 +302,11 @@ private:
 	float SniffTime = -1.f;
 	float RigCrouch = 0.f;             // a move's squash, done as bent legs
 	float RigNod = 0.f;                // a move's pitch while on the ground, done by the head
+	FVector FrontReachPoints[2] = { FVector::ZeroVector, FVector::ZeroVector }; // world: left, right
+	float FrontReachWeight = 0.f;      // as asked
+	float FrontReach = 0.f;            // smoothed
+	float RigRear = 0.f;               // degrees the body is pitched up around the hips (smoothed)
+	float RigReachShift = 0.f;         // how far the body has stepped forward to reach (rig units, smoothed)
 	float ModelMeshHeight = 1.f;       // the model mesh's own height (before scaling)
 
 	/** The model's own clips, by EAlienClip (empty when it has none). */
@@ -311,6 +334,7 @@ private:
 
 	float ModelHeight = 32.f;
 	float ModelRadius = 10.f;
+	float ModelFront = 0.f;
 	float CollisionRadius = 8.f;
 	float ShadowRadius = 10.f;
 	float Energy = 0.5f;

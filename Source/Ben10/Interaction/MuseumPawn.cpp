@@ -1487,6 +1487,78 @@ void AMuseumPawn::ConfirmPlacement()
 		: TEXT("Chamber placed. Grab it to move, use two hands to resize."));
 }
 
+AMuseumPawn::FHandTap& AMuseumPawn::GetTap(const UMuseumHandInteractor* Hand)
+{
+	return Hand == LeftHand ? LeftTap : RightTap;
+}
+
+void AMuseumPawn::UpdateGlassTaps(float DeltaSeconds)
+{
+	AMuseumDirector* Director = GetDirector();
+	const UWorld* World = GetWorld();
+	if (!Director || !World || DeltaSeconds <= 0.f)
+	{
+		return;
+	}
+	const double Now = World->GetTimeSeconds();
+	for (UMuseumHandInteractor* Hand : { LeftHand.Get(), RightHand.Get() })
+	{
+		FHandTap& Tap = GetTap(Hand);
+		FVector Tip;
+		if (!Hand->GetTapPoint(Tip))
+		{
+			Tap = FHandTap();
+			continue;
+		}
+		// The glass nearest the tip, if it is within a few cm of it.
+		AAlienChamber* Nearest = nullptr;
+		float NearestDistance = 0.f;
+		FVector NearestOnGlass = FVector::ZeroVector;
+		for (AAlienChamber* Chamber : Director->GetChambers())
+		{
+			float Distance = 0.f;
+			FVector Normal;
+			FVector OnGlass;
+			if (Chamber && Chamber->GetGlassWallDistance(Tip, Distance, Normal, OnGlass) && FMath::Abs(Distance) < 12.f
+				&& (!Nearest || FMath::Abs(Distance) < FMath::Abs(NearestDistance)))
+			{
+				Nearest = Chamber;
+				NearestDistance = Distance;
+				NearestOnGlass = OnGlass;
+			}
+		}
+		if (!Nearest)
+		{
+			Tap = FHandTap();
+			continue;
+		}
+		// Busy hands don't knock: holding or reaching for something, resizing, placing a case.
+		const bool bBusy = Mode != EMuseumPawnMode::Default || Hand->IsGrabPressed() || Hand->IsSelectPressed()
+			|| GetGrab(Hand).Chamber.IsValid() || GetResize(Hand).Chamber.IsValid()
+			|| GetAlienGrab(Hand).Alien.IsValid() || GetAlienPress(Hand).Alien.IsValid() || Nearest->IsBeingGrabbed();
+		if (Tap.Chamber.Get() == Nearest && Tap.bHasLast && Tap.LastDistance > 0.f && NearestDistance <= 0.f)
+		{
+			// In through the glass since the last frame: fast enough to be a knock?
+			const float Speed = (Tap.LastDistance - NearestDistance) / DeltaSeconds;
+			if (Tap.bArmed && !bBusy && Speed >= TapMinSpeed && Now - Tap.LastTapTime > 0.15)
+			{
+				const float Strength = FMath::Clamp((Speed - TapMinSpeed) / FMath::Max(1.f, TapKnockSpeed - TapMinSpeed), 0.f, 1.f);
+				Nearest->TapGlass(NearestOnGlass, Strength);
+				Hand->PulseHaptics(0.25f + 0.6f * Strength, 0.03f + 0.04f * Strength);
+				Tap.LastTapTime = Now;
+			}
+			Tap.bArmed = false; // a slow push through the glass is a hand reaching in: no knock until it comes back out
+		}
+		if (NearestDistance > 1.5f)
+		{
+			Tap.bArmed = true;
+		}
+		Tap.Chamber = Nearest;
+		Tap.LastDistance = NearestDistance;
+		Tap.bHasLast = true;
+	}
+}
+
 void AMuseumPawn::UpdateMenuGesture(float DeltaSeconds)
 {
 	const bool bHolding = LeftHand->GetSource() == EMuseumHandSource::Hand
@@ -1533,4 +1605,5 @@ void AMuseumPawn::Tick(float DeltaSeconds)
 	UpdateAlienTargets();
 	UpdatePlacement(DeltaSeconds);
 	UpdateMenuGesture(DeltaSeconds);
+	UpdateGlassTaps(DeltaSeconds);
 }

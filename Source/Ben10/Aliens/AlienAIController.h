@@ -38,6 +38,12 @@ public:
 	/** Called by the alien when its chamber is picked up / put down. */
 	void NotifyHeld(bool bHeld);
 
+	/**
+	 * Someone tapped (Strength 0) or knocked (1) on its glass at GlassPoint (GlassNormal points out of the case).
+	 * A light tap makes it curious, a hard knock startles it, three taps within a few seconds annoy it.
+	 */
+	void NotifyGlassTap(const FVector& GlassPoint, const FVector& GlassNormal, float Strength);
+
 	/** Seconds between decisions. Movement itself stays smooth every frame. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Alien|AI", meta = (ClampMin = 0.05))
 	float ThinkInterval = 0.2f;
@@ -69,4 +75,7 @@ private:
 	int32 LookAroundSteps = 0;
 	bool bPlayerWasNear = false;
 	bool bHopped = false;
+
+	/** When the glass was tapped lately (for "again and again"). */
+	TArray<double> TapTimes;
 };

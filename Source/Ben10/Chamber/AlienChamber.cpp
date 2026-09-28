@@ -4,6 +4,7 @@
 #include "Chamber/ChamberHabitatComponent.h"
 #include "Aliens/AlienCharacter.h"
 #include "Aliens/AlienActionComponent.h"
+#include "Aliens/AlienAIController.h"
 #include "Data/AlienDataAsset.h"
 #include "Core/MuseumAssets.h"
 #include "Core/MuseumAudio.h"
@@ -911,6 +912,239 @@ void AAlienChamber::UpdateAmbience(bool bRestart)
 	bAmbienceBehindGlass = bBehindGlass;
 }
 
+// ---------------------------------------------------------------------------------------------
+// The glass: taps, ripples, marks
+// ---------------------------------------------------------------------------------------------
+
+bool AAlienChamber::GetGlassWallDistance(const FVector& WorldPoint, float& OutDistance, FVector& OutNormal, FVector& OutOnGlass) const
+{
+	const FTransform& T = GetActorTransform();
+	const FVector Local = T.InverseTransformPosition(WorldPoint); // chamber space: cm at scale 1
+	if (Local.Z < BaseHeight || Local.Z > BaseHeight + GlassHeight)
+	{
+		return false; // below the base or above the lid: no glass there
+	}
+	const FVector2f Half = GetInnerHalfLocal();
+	FVector LocalNormal;
+	FVector LocalOnGlass = Local;
+	float LocalDistance;
+	if (Shape == EChamberShape::Round)
+	{
+		const FVector2D Flat(Local.X, Local.Y);
+		const double Radius = Flat.Size();
+		const FVector2D Dir = Radius > UE_KINDA_SMALL_NUMBER ? Flat / Radius : FVector2D(1.0, 0.0);
+		LocalDistance = static_cast<float>(Radius) - Half.X;
+		LocalNormal = FVector(Dir.X, Dir.Y, 0.0);
+		LocalOnGlass = FVector(Dir.X * Half.X, Dir.Y * Half.X, Local.Z);
+	}
+	else
+	{
+		// The wall the point is closest to going outwards; a point past a corner is beside no wall.
+		const float OutX = static_cast<float>(FMath::Abs(Local.X)) - Half.X;
+		const float OutY = static_cast<float>(FMath::Abs(Local.Y)) - Half.Y;
+		const double SideX = Local.X >= 0.0 ? 1.0 : -1.0;
+		const double SideY = Local.Y >= 0.0 ? 1.0 : -1.0;
+		if (OutX >= OutY)
+		{
+			if (OutY > 2.f)
+			{
+				return false;
+			}
+			LocalDistance = OutX;
+			LocalNormal = FVector(SideX, 0.0, 0.0);
+			LocalOnGlass = FVector(SideX * Half.X, FMath::Clamp(Local.Y, -static_cast<double>(Half.Y), static_cast<double>(Half.Y)), Local.Z);
+		}
+		else
+		{
+			if (OutX > 2.f)
+			{
+				return false;
+			}
+			LocalDistance = OutY;
+			LocalNormal = FVector(0.0, SideY, 0.0);
+			LocalOnGlass = FVector(FMath::Clamp(Local.X, -static_cast<double>(Half.X), static_cast<double>(Half.X)), SideY * Half.Y, Local.Z);
+		}
+	}
+	OutDistance = LocalDistance * GetChamberScale();
+	OutNormal = T.TransformVectorNoScale(LocalNormal).GetSafeNormal();
+	OutOnGlass = T.TransformPosition(LocalOnGlass);
+	return true;
+}
+
+void AAlienChamber::TapGlass(const FVector& WorldPoint, float Strength)
+{
+	Strength = FMath::Clamp(Strength, 0.f, 1.f);
+	float Distance = 0.f;
+	FVector Normal;
+	FVector OnGlass;
+	if (!GetGlassWallDistance(WorldPoint, Distance, Normal, OnGlass))
+	{
+		OnGlass = WorldPoint;
+		Normal = (WorldPoint - GetActorLocation()).GetSafeNormal2D();
+	}
+	RippleGlass(OnGlass, Normal, 0.35f + 0.65f * Strength, FMath::Lerp(ActiveLightColor, FLinearColor::White, 0.55f));
+	if (UMuseumAudio* Audio = UMuseumAudio::Get(this))
+	{
+		// The glass itself rings: heard as it is, never muffled.
+		Audio->PlayAt(Strength >= 0.55f ? TEXT("Glass.Knock") : TEXT("Glass.Tap"), OnGlass, 0.45f + 0.55f * Strength);
+	}
+	if (Occupant)
+	{
+		if (AAlienAIController* Brain = Cast<AAlienAIController>(Occupant->GetController()))
+		{
+			Brain->NotifyGlassTap(OnGlass, Normal, Strength);
+		}
+	}
+	UE_LOG(LogAlienMuseum, Log, TEXT("%s: glass tapped (strength %.2f)"), *GetName(), Strength);
+}
+
+int32 AAlienChamber::GetGlassEffectSlot(bool bMark)
+{
+	int32 Oldest = INDEX_NONE;
+	for (int32 i = 0; i < GlassEffects.Num(); ++i)
+	{
+		if (GlassEffects[i].bMark != bMark)
+		{
+			continue;
+		}
+		if (GlassEffects[i].Life < 0.f)
+		{
+			return i;
+		}
+		if (Oldest == INDEX_NONE || GlassEffects[i].Age / GlassEffects[i].Life > GlassEffects[Oldest].Age / GlassEffects[Oldest].Life)
+		{
+			Oldest = i;
+		}
+	}
+	// A few of each are plenty: a new one takes over the one nearest its end.
+	const int32 Count = GlassEffects.FilterByPredicate([bMark](const FGlassEffect& Effect) { return Effect.bMark == bMark; }).Num();
+	if (Count >= (bMark ? 3 : 9))
+	{
+		return Oldest;
+	}
+	UMaterialInterface* EffectMaterial = bMark ? MuseumAssets::FXGlowMaterial() : MuseumAssets::FXRingMaterial();
+	UStaticMeshComponent* Mesh = NewObject<UStaticMeshComponent>(this, MakeUniqueObjectName(this, UStaticMeshComponent::StaticClass(), bMark ? TEXT("GlassMark") : TEXT("GlassRing")));
+	Mesh->SetStaticMesh(bMark ? MuseumAssets::SphereMesh() : MuseumAssets::PlaneMesh());
+	Mesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	Mesh->SetCastShadow(false);
+	Mesh->SetCanEverAffectNavigation(false);
+	Mesh->SetupAttachment(GetRootComponent());
+	Mesh->RegisterComponent();
+	UMaterialInstanceDynamic* MID = EffectMaterial ? UMaterialInstanceDynamic::Create(EffectMaterial, this) : nullptr;
+	if (MID)
+	{
+		Mesh->SetMaterial(0, MID);
+	}
+	Mesh->SetVisibility(false);
+	GlassEffectMeshes.Add(Mesh);
+	GlassEffectMIDs.Add(MID);
+	FGlassEffect Effect;
+	Effect.bMark = bMark;
+	return GlassEffects.Add(Effect);
+}
+
+void AAlienChamber::RippleGlass(const FVector& WorldPoint, const FVector& Normal, float Strength, const FLinearColor& Color)
+{
+	const FTransform& T = GetActorTransform();
+	const float Scale = GetChamberScale();
+	// Three rings, one after another, spreading wider the harder the knock.
+	for (int32 Ring = 0; Ring < 3; ++Ring)
+	{
+		const int32 Slot = GetGlassEffectSlot(false);
+		if (Slot == INDEX_NONE)
+		{
+			return;
+		}
+		FGlassEffect& Effect = GlassEffects[Slot];
+		Effect.LocalPoint = T.InverseTransformPosition(WorldPoint + Normal * 0.4f * Scale); // just off the glass, on the side it came from
+		Effect.LocalNormal = T.InverseTransformVectorNoScale(Normal).GetSafeNormal();
+		Effect.Age = 0.f;
+		Effect.Delay = 0.09f * Ring;
+		Effect.Life = 0.55f + 0.15f * Strength;
+		Effect.Size0 = 2.f;
+		Effect.Size1 = (8.f + 26.f * Strength) * (1.f - 0.22f * Ring);
+		Effect.Opacity = (0.45f + 0.4f * Strength) * (1.f - 0.25f * Ring);
+		if (UMaterialInstanceDynamic* MID = GlassEffectMIDs[Slot])
+		{
+			MID->SetVectorParameterValue(MuseumAssets::Params::Color, Color);
+			MID->SetScalarParameterValue(MuseumAssets::Params::Intensity, 2.2f);
+			MID->SetScalarParameterValue(MuseumAssets::Params::Opacity, 0.f);
+		}
+	}
+}
+
+void AAlienChamber::MarkGlass(const FVector& WorldPoint, const FVector& Normal, float Size, const FLinearColor& Color, float Life, float Opacity)
+{
+	const int32 Slot = GetGlassEffectSlot(true);
+	if (Slot == INDEX_NONE)
+	{
+		return;
+	}
+	const FTransform& T = GetActorTransform();
+	FGlassEffect& Effect = GlassEffects[Slot];
+	Effect.LocalPoint = T.InverseTransformPosition(WorldPoint - Normal * 0.4f * GetChamberScale()); // on the inside of the glass
+	Effect.LocalNormal = T.InverseTransformVectorNoScale(Normal).GetSafeNormal();
+	Effect.Age = 0.f;
+	Effect.Delay = 0.f;
+	Effect.Life = FMath::Max(0.5f, Life);
+	Effect.Size0 = Effect.Size1 = Size / FMath::Max(0.01f, GetChamberScale());
+	Effect.Opacity = FMath::Clamp(Opacity, 0.f, 1.f);
+	if (UMaterialInstanceDynamic* MID = GlassEffectMIDs[Slot])
+	{
+		MID->SetVectorParameterValue(MuseumAssets::Params::Color, Color);
+		MID->SetScalarParameterValue(MuseumAssets::Params::Intensity, 0.9f);
+		MID->SetScalarParameterValue(MuseumAssets::Params::Softness, 1.2f);
+		MID->SetScalarParameterValue(MuseumAssets::Params::Opacity, Effect.Opacity);
+	}
+}
+
+void AAlienChamber::UpdateGlassEffects(float DeltaSeconds)
+{
+	for (int32 i = 0; i < GlassEffects.Num(); ++i)
+	{
+		FGlassEffect& Effect = GlassEffects[i];
+		UStaticMeshComponent* Mesh = GlassEffectMeshes[i];
+		if (Effect.Life < 0.f || !Mesh)
+		{
+			continue;
+		}
+		Effect.Age += DeltaSeconds;
+		const float Time = Effect.Age - Effect.Delay;
+		if (Time >= Effect.Life)
+		{
+			Effect.Life = -1.f;
+			Mesh->SetVisibility(false);
+			continue;
+		}
+		if (Time < 0.f)
+		{
+			continue; // a later ring of the ripple, not started yet
+		}
+		const float A = Time / Effect.Life;
+		const FQuat Facing = FRotationMatrix::MakeFromZ(Effect.LocalNormal).ToQuat(); // the plane / flattened sphere lies on the glass
+		FVector LocalScale;
+		float Opacity;
+		if (Effect.bMark)
+		{
+			LocalScale = FVector(Effect.Size0, Effect.Size0 * 0.8f, Effect.Size0 * 0.08f) / 100.f;
+			Opacity = Effect.Opacity * FMath::Min(1.f, (1.f - A) / 0.4f); // stays, then fades
+		}
+		else
+		{
+			// Rings are drawn at 80% of a 100 cm plane: a ring's size is its diameter.
+			const float Size = FMath::Lerp(Effect.Size0, Effect.Size1, 1.f - (1.f - A) * (1.f - A));
+			LocalScale = FVector(Size / 80.f, Size / 80.f, 1.f);
+			Opacity = Effect.Opacity * FMath::Min(1.f, A / 0.1f) * (1.f - A);
+		}
+		Mesh->SetRelativeTransform(FTransform(Facing, Effect.LocalPoint, LocalScale));
+		Mesh->SetVisibility(true);
+		if (UMaterialInstanceDynamic* MID = GlassEffectMIDs[i])
+		{
+			MID->SetScalarParameterValue(MuseumAssets::Params::Opacity, Opacity);
+		}
+	}
+}
+
 void AAlienChamber::KeepHabitatClearOfOccupant()
 {
 	FVector2f Center = FVector2f::ZeroVector;
@@ -1434,6 +1668,7 @@ void AAlienChamber::Tick(float DeltaSeconds)
 		AmbienceTimer = 0.25f;
 		UpdateAmbience(false);
 	}
+	UpdateGlassEffects(DeltaSeconds);
 
 	if (bGrabbed)
 	{

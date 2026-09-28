@@ -13,7 +13,7 @@ UAlienDataAsset (DA_Model_*, DA_Classic_*, DA_Alien_*)   identity, look, behavio
         ├─ UAlienActionComponent               signature moves + effects (head flames, speed trails)
         ├─ UAlienSoundComponent                its voice, footsteps, move sounds (through UMuseumAudio)
         └─ AAlienAIController                  state machine: Idle / Wander / LookAround / ReactToPlayer /
-             │                                 Performing / Held
+             │                                 Performing / Held; answers taps on its glass
              └─ CharacterMovementComponent     direct steering inside the chamber (no navmesh needed)
 
 AAlienChamber (BP_AlienChamber)                   Shape: Box (tall display case, default) or Round (pod)
@@ -27,12 +27,14 @@ AAlienChamber (BP_AlienChamber)                   Shape: Box (tall display case,
    ├─ InfoRoot (holographic info panel)
    ├─ InteriorLight (optional real light, off by default)
    ├─ ambience sound (its occupant's home world, or a soft hum; heard up close)
+   ├─ glass effects (pooled: ripple rings where it is tapped or hit, marks such as a smear or breath)
    └─ spatial anchor component (added at runtime by UMuseumPersistenceComponent)
 
 AMuseumDirector (BP_MuseumDirector, one per level)
    ├─ UMuseumSceneComponent        passthrough, scene permission, MRUK room, surface raycasts, occluders
    └─ UMuseumPersistenceComponent  save game + Meta spatial anchors
-AMuseumPawn (BP_MuseumPawn)       camera, controllers, 2 × UMuseumHandInteractor (controller / hand / desktop)
+AMuseumPawn (BP_MuseumPawn)       camera, controllers, 2 × UMuseumHandInteractor (controller / hand / desktop),
+                                  knocks on the glass (fingertip or controller tip)
 AAlienCollectionPanel             3D holographic collection UI (cards, buttons)
 UMuseumAudio (world subsystem)    plays every sound in 3D (Resonance Audio), glass muffling, who may call out
 ```
@@ -84,6 +86,17 @@ level's editor-only furniture (tag `MuseumEditorRoom`) stands in for your room.
 | Hold left mouse on an alien | the same (a quick click shows its case's info panel) |
 | Left mouse on a case's red X, twice / Delete twice | remove the chamber (the first press asks "REMOVE?") |
 | Tab | open / close the Alien Collection |
+
+Tapping the glass needs a hand or a controller. To try it at the desk, run this in the Output Log's
+Python console while playing (it knocks on the front of the first case; 0.3 = a tap, 0.9 = a hard knock):
+
+```python
+import unreal
+w = unreal.get_editor_subsystem(unreal.UnrealEditorSubsystem).get_game_world()
+c = unreal.GameplayStatics.get_all_actors_of_class(w, unreal.AlienChamber)[0]
+p = c.get_actor_transform().transform_location(unreal.Vector(c.get_inner_size().x / 2, 0, c.get_editor_property('base_height') + 45))
+c.tap_glass(p, 0.3)
+```
 
 ## Deploy to Quest 3S
 
@@ -246,6 +259,48 @@ Sources for the moves: [Cannonbolt (Ben 10 Wiki)](https://ben10.fandom.com/wiki/
 [CBR: original aliens ranked](https://www.cbr.com/ben-10-original-aliens-ranked/),
 [VS Battles: Ben 10 (Classic)](https://vsbattles.fandom.com/wiki/Ben_10_(Classic)).
 
+## Tap the glass
+
+Knock on a case like on an aquarium and its alien answers.
+
+* **The knock** – a fingertip (hand tracking; not while pinching or making a fist) or the front of a
+  controller that goes into the glass faster than `TapMinSpeed` (25 cm/s) is a tap; at `TapKnockSpeed`
+  (150 cm/s) it is a hard knock. Slower, it is a hand reaching in and nothing happens; the tip has to come
+  back out of the glass before it can knock again. A busy hand never knocks (holding or aiming at something,
+  resizing, placing a case). The glass ripples from the spot (rings in the case's light colour), rings with
+  a tap or a knock, and the controller buzzes.
+* **The mood** – a soft tap makes it curious, a hard knock startles it (it flinches with a hop, Grey Matter
+  jumps out of his skin, a model with its own flinch animation plays it), and the third tap within 6 s
+  annoys it. It turns to the sound, comes over to the spot and answers in character. Busy with a move of its
+  own, it only glances over; the tap too many interrupts its answer.
+* **The answers** (`TapStyle` on its data asset):
+
+| Alien | Answer |
+|---|---|
+| Wildmutt | Finds the spot with his nose (he is blind), then he is up on his hind legs like a dog at a window: both front paws land on the glass, scratch at it in turn, and he whines to be let out (snarls, and scratches harder, when annoyed) |
+| Benwolf | Snout right up to the glass with a low growl or a sniff, and his breath fogs it; a hard knock gets the sonic howl back |
+| Ghostfreak | Glides over and pushes his face right up to the glass - and through it, a little - with a whisper or a laugh |
+| Four Arms | Punches the glass back (it shudders, the props jump) - twice when annoyed |
+| Grey Matter | Studies the spot, head tilting one way, then the other |
+| XLR8 | Is simply there, and taps back twice on your spot before you can blink |
+| Upgrade | Green circuit lines race across the glass from the spot |
+| Stinkfly | Flies up to the spot and bumps against the glass like a bug at a window |
+| Ripjaws | Lunges and snaps his jaws at the glass |
+| Cannonbolt | Curls up and rolls at the spot |
+| Upchuck | Squashes his face on the glass, rubs it about, and leaves a slimy smear |
+| Ditto | His clones come out too |
+| Echo Echo | A small sonic ring hits the glass |
+| Diamondhead | A little crystal grows on the glass where you tapped |
+| Wildvine | A vine reaches out and taps back |
+
+  Annoyed, the others answer with their show-off move (Echo Echo screams, Diamondhead bursts crystals,
+  Ghostfreak phases...).
+* **Really touching it** – answers land on the glass: a rigged body puts its front paws on it (it rears up
+  around its hips and steps forward as far as its paws need, the hind paws planted: `SetFrontReach`), a face
+  goes up to it from the head bone, and a rigid model lunges or leans exactly the gap between its front and
+  the glass (`GapToGlass`). An alien that can't get to the glass (a prop, or the case too small for it)
+  answers from where it is without touching it.
+
 ## Sound
 
 Every sound is original: `Scripts/make_museum_sounds.py` synthesises them from oscillators, noise, filters and
@@ -309,7 +364,8 @@ and FM tones. Random seeds are fixed, so the same files come out every run.
   look around and nod with the steps, `Jaw` pants and snarls, `bSniffs` lifts the nose to sniff now and
   then, `Tail` waves (`TailAmount`, `TailSpeed`), `Floating` bones drift. `StrideLength` / `StepHeight`
   in model heights. Wildmutt walks on all fours this way and Ghostfreak's tail waves; the settings live
-  in `RIGS` in `Scripts/import_downloaded_models.py`. Console `Museum.RigTestSpeed 14` makes rigged
+  in `RIGS` in `Scripts/import_downloaded_models.py`. A rig with front legs can also stand up with its
+  front paws on something (`SetFrontReach`: Wildmutt at the glass). Console `Museum.RigTestSpeed 14` makes rigged
   aliens step on the spot as if walking at 14 cm/s (for checking the gait; 0 = off).
 * **Animated models** – `Clips` (the model's own hand-made animations, imported with its `RiggedMesh`:
   Benwolf) replace the procedural walk: `Idle` loops while it stands, `Move` blends in while it walks
@@ -323,6 +379,9 @@ and FM tones. Random seeds are fixed, so the same files come out every run.
   asset: `Calls` / `Alerts` / `Efforts` / `Held` / `Footsteps`, `Loop`, `CallInterval`, `Volume`, `FootstepVolume`,
   `LoopVolume`, `Pitch` (it also rises a little when its case is scaled down). `Scripts/import_museum_sounds.py`
   (`MIX`, `VOICES`) sets them all.
+* **Tapping the glass** – `TapStyle` on an alien's data asset (see *Tap the glass*; `TAP` in
+  `Scripts/create_habitats_and_moves.py` sets them), and on `BP_MuseumPawn` `TapMinSpeed` / `TapKnockSpeed`
+  (Museum|Glass).
 * **Moves** – on any alien data asset: `Habitat`, `SignatureActions`, `ActionChance`, `ActionColor`,
   `bHeadFlames`, `bSpeedTrail`, `PoseMesh` (a second pose of the model shown during Flex) and `BallMesh`
   (the rolled-up form for Roll). `Scripts/create_habitats_and_moves.py` sets them all.
@@ -443,7 +502,11 @@ Resonance renders all sources into one third-order ambisonic mix decoded once fo
   animals or the show. Better recordings can replace any of them - import them in place of the `V_*` /
   `SFX_*` waves (same names), or point an alien's `Sounds` at others.
 * In the editor, a game in the background is silent (Windows mutes an unfocused app): click into the
-  viewport, or set `[Audio] UnfocusedVolumeMultiplier=1.0` in your local `Saved/Config/WindowsEditor/Engine.ini`.
+  viewport, or start the editor with `-ini:Engine:[Audio]:UnfocusedVolumeMultiplier=1.0` (a line added to
+  `Saved/Config/WindowsEditor/Engine.ini` by hand does not survive the editor rewriting that file).
+* Tapping the glass can't be done with the mouse (see *Test in the editor* for the Python line); the
+  fingertip and controller knocks are for the headset. The smear and the breath on the glass are soft
+  glowing shapes, not real fluid.
 * **Depth-API occlusion is not available** with the launcher engine in Native OpenXR mode: in Meta XR 1.205
   `StartEnvironmentDepth` / `SetXROcclusionsMode` only work on Meta's UE fork (`WITH_OCULUS_BRANCH`).
   Occlusion therefore uses the MRUK room model (walls and furniture become Alpha-Holdout occluders).

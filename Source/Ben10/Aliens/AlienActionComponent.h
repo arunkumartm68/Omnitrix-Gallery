@@ -27,6 +27,14 @@ class UMaterialInterface;
 class UMaterialInstanceDynamic;
 class UPhysicalMaterial;
 
+/** How an alien feels about a tap on its glass. */
+enum class EGlassMood : uint8
+{
+	Curious,   // a light tap
+	Startled,  // a hard knock
+	Annoyed    // tapped again and again
+};
+
 UCLASS(ClassGroup = (AlienMuseum))
 class BEN10_API UAlienActionComponent : public UActorComponent
 {
@@ -58,6 +66,13 @@ public:
 
 	UFUNCTION(BlueprintPure, Category = "Alien|Actions")
 	EAlienAction GetCurrentAction() const { return Current; }
+
+	/**
+	 * Answers a tap on its glass at GlassPoint (the wall's normal pointing out of the case): it turns to the
+	 * sound, comes over and answers in character (its data's TapStyle). Annoyed, it performs its show-off move.
+	 * False when it can't right now (held, in the air).
+	 */
+	bool StartGlassReaction(const FVector& GlassPoint, const FVector& InGlassNormal, float Strength, EGlassMood Mood);
 
 	virtual void TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction) override;
 
@@ -99,6 +114,22 @@ private:
 	void TickScurry(float Dt);
 	void TickFly(float Dt);
 	void TickHowl(float Dt);
+	void TickGlassReact(float Dt);
+
+	/** Its paw, fist, face or vine touches the glass from inside: a ripple and a tap or knock right there. */
+	void HitGlass(const FVector& Point, float Strength);
+
+	/** The spot on the glass straight in front of it, at that share of its height (its face, its paws). */
+	FVector GlassPointAtHeight(float Fraction) const;
+
+	/** Wildmutt's answer at the glass on a rigged body: sniffs, up on it, scratches. Returns its length (s). */
+	float PawAtGlass(bool bEnter, const FVector& Along);
+
+	/** How far its front still is from the glass straight ahead, at that share of its height (cm; 0 touching). */
+	float GapToGlass(float Fraction) const;
+
+	/** Its face and the glass: the spot in front of the face (out) and how far the face still is from it (cm). */
+	float FaceGapToGlass(FVector& OutOnGlass) const;
 
 	/** True on the first tick of a step (each move's steps set themselves up then). */
 	bool Entering();
@@ -210,6 +241,14 @@ private:
 	float Amount = 0.f;
 	float LastYaw = 0.f;
 	bool bGhostMode = false;
+
+	// ---- answering a tap on the glass ----
+	EAlienTapStyle TapStyle = EAlienTapStyle::Curious;
+	EGlassMood GlassMood = EGlassMood::Curious;
+	FVector GlassNormal = FVector::ForwardVector;   // out of the case, towards whoever tapped
+	float GlassGap = 0.f;                           // how far it has to lean / lunge to get to the glass (cm)
+	/** A roll aimed somewhere (Cannonbolt rolling into the tapped glass) instead of a random direction. */
+	FVector ForcedDirection = FVector::ZeroVector;
 	bool bTempFlames = false;
 	FRandomStream Rng;
 
