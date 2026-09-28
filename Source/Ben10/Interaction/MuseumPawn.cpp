@@ -1,6 +1,7 @@
 // Alien Museum - the player in mixed reality.
 
 #include "Interaction/MuseumPawn.h"
+#include "Core/MuseumAudio.h"
 #include "Interaction/MuseumHandInteractor.h"
 #include "Aliens/AlienCharacter.h"
 #include "Chamber/AlienChamber.h"
@@ -356,10 +357,19 @@ void AMuseumPawn::PressRemove(AAlienChamber* Chamber)
 	{
 		return;
 	}
+	UMuseumAudio* Audio = UMuseumAudio::Get(this);
 	if (!Chamber->PressRemoveButton())
 	{
+		if (Audio)
+		{
+			Audio->PlayAt(TEXT("Case.Arm"), Chamber->GetActorLocation() + FVector(0.f, 0.f, 20.f));
+		}
 		Director->SetStatusText(TEXT("Press the red X again to remove this chamber and its alien."));
 		return;
+	}
+	if (Audio)
+	{
+		Audio->PlayAt(TEXT("Case.Remove"), Chamber->GetActorLocation() + FVector(0.f, 0.f, 40.f * Chamber->GetChamberScale()));
 	}
 	// Let go of everything that belongs to it first.
 	for (UMuseumHandInteractor* Hand : { LeftHand.Get(), RightHand.Get() })
@@ -775,6 +785,10 @@ bool AMuseumPawn::TryBeginResize(UMuseumHandInteractor* Hand, bool bFromSelect)
 	Resize.Direction = Chamber->GetResizeDirection(Handle);
 	Resize.StartPoint = GetResizePoint(Hand, Resize);
 	Chamber->BeginResize(Handle);
+	if (UMuseumAudio* Audio = UMuseumAudio::Get(this))
+	{
+		Audio->PlayAt(TEXT("Case.Resize"), Handle->GetComponentLocation());
+	}
 	return true;
 }
 
@@ -814,6 +828,10 @@ void AMuseumPawn::EndResize(UMuseumHandInteractor* Hand)
 	if (AAlienChamber* Chamber = Resize.Chamber.Get())
 	{
 		Chamber->EndResize();
+		if (UMuseumAudio* Audio = UMuseumAudio::Get(this))
+		{
+			Audio->PlayAt(TEXT("Case.Resize"), Hand->GetGrabLocation(), 0.7f);
+		}
 	}
 	Resize = FHandResize();
 }
@@ -1145,6 +1163,10 @@ bool AMuseumPawn::TryBeginGrab(UMuseumHandInteractor* Hand, bool bFromSelect)
 	else
 	{
 		Target->BeginGrab();
+		if (UMuseumAudio* Audio = UMuseumAudio::Get(this))
+		{
+			Audio->PlayAt(TEXT("Case.Grab"), Target->GetActorLocation(), 0.8f);
+		}
 	}
 	return true;
 }
@@ -1201,6 +1223,13 @@ void AMuseumPawn::EndGrab(UMuseumHandInteractor* Hand)
 	if (bWasClick)
 	{
 		Chamber->ToggleInfoPanel();
+	}
+	else if (Chamber->WasMovedByLastGrab())
+	{
+		if (UMuseumAudio* Audio = UMuseumAudio::Get(this))
+		{
+			Audio->PlayAt(TEXT("Case.Release"), Chamber->GetActorLocation());
+		}
 	}
 	if (AMuseumDirector* Director = GetDirector())
 	{
@@ -1421,6 +1450,10 @@ void AMuseumPawn::ConfirmPlacement()
 		if (AAlienChamber* Chamber = PlacementTarget.Get())
 		{
 			Director->PlaceAlienInChamber(Chamber, PendingAlien);
+			if (UMuseumAudio* Audio = UMuseumAudio::Get(this))
+			{
+				Audio->PlayAt(TEXT("Alien.Materialize"), Chamber->GetActorLocation() + FVector(0.f, 0.f, 40.f * Chamber->GetChamberScale()));
+			}
 			SetMode(EMuseumPawnMode::Default);
 			return;
 		}
@@ -1428,6 +1461,10 @@ void AMuseumPawn::ConfirmPlacement()
 
 	if (!bPlacementValid)
 	{
+		if (UMuseumAudio* Audio = UMuseumAudio::Get(this))
+		{
+			Audio->PlayAt(TEXT("UI.Error"), Head + (PlacementLocation - Head).GetSafeNormal() * 40.f); // towards where you point
+		}
 		Director->SetStatusText(!Director->CanAddChamber() ? TEXT("The museum is full. Remove a chamber first.")
 			: bPlacementSpotOk ? TEXT("Too close to another chamber.")
 			: TEXT("Can't place there. Aim at free floor or a table top."));
@@ -1436,6 +1473,14 @@ void AMuseumPawn::ConfirmPlacement()
 
 	const float Yaw = (Head - PlacementLocation).Rotation().Yaw;
 	Director->SpawnChamberAt(PlacementLocation, Yaw, Mode == EMuseumPawnMode::PlacingAlien ? PendingAlien.Get() : nullptr);
+	if (UMuseumAudio* Audio = UMuseumAudio::Get(this))
+	{
+		Audio->PlayAt(TEXT("Case.Place"), PlacementLocation + FVector(0.f, 0.f, 20.f));
+		if (Mode == EMuseumPawnMode::PlacingAlien)
+		{
+			Audio->PlayAt(TEXT("Alien.Materialize"), PlacementLocation + FVector(0.f, 0.f, 50.f));
+		}
+	}
 	SetMode(EMuseumPawnMode::Default);
 	Director->SetStatusText(bPlacementInAir
 		? TEXT("Chamber floating in the air. Grab it to move, use two hands to resize.")

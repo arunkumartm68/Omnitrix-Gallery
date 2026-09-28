@@ -19,6 +19,7 @@ class UStaticMesh;
 class USkeletalMesh;
 class UAnimSequence;
 class UChamberHabitatAsset;
+class USoundBase;
 
 /** Signature move an alien performs now and then, and to show off to a visitor (UAlienActionComponent). */
 UENUM(BlueprintType)
@@ -363,6 +364,58 @@ struct BEN10_API FAlienClips
 	}
 };
 
+/**
+ * How an alien sounds: original sounds made by Scripts/make_museum_sounds.py (a growl, a whisper, a chirp...
+ * synthesised for its species) and filled in by Scripts/import_museum_sounds.py. UAlienSoundComponent plays
+ * them in 3D, one variation at a time and never the same one twice in a row.
+ */
+USTRUCT(BlueprintType)
+struct BEN10_API FAlienSounds
+{
+	GENERATED_BODY()
+
+	/** Now and then on its own (growls, chirps, whispers, hums) - rarely, and only the few aliens nearest to you. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Sounds")
+	TArray<TObjectPtr<USoundBase>> Calls;
+
+	/** When a visitor walks up, or it is startled. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Sounds")
+	TArray<TObjectPtr<USoundBase>> Alerts;
+
+	/** Effort in its moves: the snarl before a leap, the grunt of a stomp. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Sounds")
+	TArray<TObjectPtr<USoundBase>> Efforts;
+
+	/** Picked up by the player. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Sounds")
+	TArray<TObjectPtr<USoundBase>> Held;
+
+	/** Played close up only. Empty for aliens that float (Ghostfreak, Stinkfly). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Sounds")
+	TArray<TObjectPtr<USoundBase>> Footsteps;
+
+	/** Plays all the time, quietly, while you are close (Stinkfly's buzzing wings). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Sounds")
+	TObjectPtr<USoundBase> Loop;
+
+	/** Seconds between two of its calls (a random time in this range). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Sounds", meta = (Units = "s"))
+	FVector2D CallInterval = FVector2D(12.f, 30.f);
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Sounds", meta = (ClampMin = 0))
+	float Volume = 1.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Sounds", meta = (ClampMin = 0))
+	float FootstepVolume = 0.5f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Sounds", meta = (ClampMin = 0))
+	float LoopVolume = 0.5f;
+
+	/** Pitch of all its sounds (1 = as made). It also rises a little when its case is scaled down. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Sounds", meta = (ClampMin = 0.25, ClampMax = 4))
+	float Pitch = 1.f;
+};
+
 UCLASS(BlueprintType)
 class BEN10_API UAlienDataAsset : public UPrimaryDataAsset
 {
@@ -526,6 +579,12 @@ public:
 	/** Rolled-up form shown during Roll (e.g. Cannonbolt's ball model). Empty = a built-in armoured ball in the action colour. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Actions")
 	TSoftObjectPtr<UStaticMesh> BallMesh;
+
+	// ---------- Sounds ----------
+
+	/** Its voice, footsteps and loop (Scripts/import_museum_sounds.py). Its moves' sounds are in UMuseumSoundLibrary. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Sounds")
+	FAlienSounds Sounds;
 
 	// ---------- Behaviour ----------
 

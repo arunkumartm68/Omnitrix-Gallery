@@ -165,6 +165,9 @@ private:
 	void SetButtonEnabled(FMuseumPanelButton& Button, bool bEnabled);
 	int32 GetPageCount() const;
 
+	/** A panel sound (UMuseumAudio library name) at the card or button pressed. */
+	void PlayPanelSound(FName Name, const UPrimitiveComponent* At) const;
+
 	UPROPERTY(Transient)
 	TObjectPtr<UMaterialInstanceDynamic> BackgroundMID;
 

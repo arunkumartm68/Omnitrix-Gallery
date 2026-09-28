@@ -3,6 +3,7 @@
 #include "Aliens/AlienAIController.h"
 #include "Aliens/AlienCharacter.h"
 #include "Aliens/AlienActionComponent.h"
+#include "Aliens/AlienSoundComponent.h"
 #include "Chamber/AlienChamber.h"
 #include "Data/AlienDataAsset.h"
 #include "Camera/PlayerCameraManager.h"
@@ -113,6 +114,10 @@ void AAlienAIController::EnterState(EAlienState NewState)
 		Alien->SetExcited(true);
 		StateDuration = Rng.FRandRange(4.f, 7.f);
 		ReactCooldownRemaining = ReactCooldown;
+		if (UAlienSoundComponent* Voice = Alien->GetSounds())
+		{
+			Voice->PlayVoice(EAlienVoice::Alert); // it noticed you
+		}
 		break;
 	}
 

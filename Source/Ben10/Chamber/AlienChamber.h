@@ -46,6 +46,7 @@ class UAlienDataAsset;
 class AAlienCharacter;
 class UStaticMesh;
 class UChamberHabitatComponent;
+class UAudioComponent;
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnAlienChamberEvent, AAlienChamber*, Chamber);
 
@@ -476,6 +477,13 @@ private:
 	/** Moves the (walking) occupant along when the case moves without a hand, e.g. anchor corrections. */
 	void CarryOccupantAlong();
 
+	/**
+	 * The case's own quiet sound, heard up close: its occupant's home world (bubbles, wind, crystals, insects,
+	 * tech pulses, embers) or just a soft hum, through the glass unless your head is inside. bRestart picks
+	 * the sound again (a new occupant); otherwise it only follows you leaning in and out.
+	 */
+	void UpdateAmbience(bool bRestart);
+
 	/** Inside half size of the glass in chamber space (X = depth, Y = width; a round pod uses its radius). */
 	FVector2f GetInnerHalfLocal() const;
 
@@ -522,6 +530,9 @@ private:
 	UPROPERTY(Transient)
 	TObjectPtr<UMaterialInstanceDynamic> RemoveMID;
 
+	UPROPERTY(Transient)
+	TObjectPtr<UAudioComponent> AmbienceAudio;
+
 	/** Basic shapes used to switch between the box and round look. */
 	UPROPERTY()
 	TObjectPtr<UStaticMesh> CubeMesh;
@@ -566,4 +577,7 @@ private:
 	/** Last frame's pose, to notice moves that did not come from a grab. */
 	FTransform LastTransform = FTransform::Identity;
 	bool bHasLastTransform = false;
+
+	bool bAmbienceBehindGlass = true;
+	float AmbienceTimer = 0.f;
 };

@@ -12,6 +12,7 @@
 
 #include "CoreMinimal.h"
 #include "Components/ActorComponent.h"
+#include "Aliens/AlienSoundComponent.h"
 #include "Data/AlienDataAsset.h"
 #include "AlienActionComponent.generated.h"
 
@@ -153,8 +154,13 @@ private:
 	void SpawnAfterImage(float Opacity, float Life);
 	void UpdateAfterImages(float Dt);
 
-	/** A little dust where the feet land (a ripple in water, sparks on lava). */
+	/** A little dust where the feet land (a ripple in water, sparks on lava), and the step's sound. */
 	void UpdateFootsteps(float Dt);
+
+	// ---- sounds (UAlienSoundComponent: the library's move sounds and the alien's own voice) ----
+	void Sfx(FName Name, float Volume = 1.f, float Pitch = 1.f);
+	void SfxAt(FName Name, const FVector& At, float Volume = 1.f);
+	void Voice(EAlienVoice Kind, float Volume = 1.f);
 
 	void EnsureBall();
 	void EnsureClones();

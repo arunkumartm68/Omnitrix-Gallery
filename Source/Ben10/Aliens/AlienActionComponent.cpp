@@ -190,6 +190,11 @@ void UAlienActionComponent::StopAction()
 		Body->SetBodyVisible(true);
 		Body->StopClip(0.2f);
 	}
+	if (UAlienSoundComponent* Sounds = Alien ? Alien->GetSounds() : nullptr)
+	{
+		Sounds->StopMoveLoop();
+		Sounds->SetLoopBoost(1.f, 1.f);
+	}
 	FlameBoost = 1.f;
 	if (bTempFlames)
 	{
@@ -350,6 +355,7 @@ void UAlienActionComponent::TickRoll(float Dt)
 			BallSpin = Alien->GetActorQuat();
 			Ball->SetVisibility(true, true);
 			MoveDir = Rng.FRand() < 0.5f ? TowardViewer() : RandomFlat(Rng);
+			Sfx(TEXT("Move.Roll.Curl"));
 		}
 		const float A = FMath::Min(1.f, StepTime / CurlTime);
 		BallGrow = FMath::Max(0.05f, EaseOutBack(A));
@@ -366,6 +372,10 @@ void UAlienActionComponent::TickRoll(float Dt)
 			Counter = 0;
 			NextStep();
 			AimRoll();
+			if (UAlienSoundComponent* Sounds = Alien->GetSounds())
+			{
+				Sounds->StartMoveLoop(TEXT("Move.Roll.Loop"));
+			}
 		}
 		break;
 	}
@@ -394,6 +404,11 @@ void UAlienActionComponent::TickRoll(float Dt)
 		if (bEnter)
 		{
 			RestoreCapsule();
+			if (UAlienSoundComponent* Sounds = Alien->GetSounds())
+			{
+				Sounds->StopMoveLoop(0.25f);
+			}
+			Sfx(TEXT("Move.Roll.Uncurl"));
 		}
 		const float A = FMath::Min(1.f, StepTime / CurlTime);
 		BallGrow = FMath::Max(0.05f, 1.f - EaseInOut(A));
@@ -457,6 +472,7 @@ void UAlienActionComponent::BounceRoll()
 	const float S = Alien->GetScaleFactor();
 	const FVector Contact = Feet() + FVector(0.f, 0.f, BallRadius) - Normal * BallRadius;
 	SpawnFx(EFx::Ring, Contact - Normal * 0.5f, UpAlong(Normal), FVector(BallRadius * 0.8f), FVector(BallRadius * 3.f), ActionColor, 0.4f, 0.8f, 2.5f);
+	SfxAt(TEXT("Move.Roll.Bounce"), Contact);
 	DustPuff(Feet() - Normal * BallRadius * 0.6f, BallRadius * 0.9f, 4);
 	Blast(Contact, BallRadius * 3.5f, 110.f * S, FVector::ZeroVector, 0.6f);
 	const float Speed = Alien->GetCharacterMovement()->MaxWalkSpeed * 0.8f;
@@ -484,6 +500,7 @@ void UAlienActionComponent::TickDash(float Dt)
 			Alien->SetPushStrength(3.f);
 			Counter = 0;
 			NextStep();
+			Voice(EAlienVoice::Effort);
 		}
 		break;
 	}
@@ -499,6 +516,7 @@ void UAlienActionComponent::TickDash(float Dt)
 			}
 			++Counter;
 			DustPuff(Feet(), H * 0.35f, 3);
+			Sfx(TEXT("Move.Dash.Zip"));
 			const FVector To = TargetPoint;
 			const float Length = static_cast<float>(FVector::Dist(From, To));
 			SpawnFx(EFx::Cylinder, (From + To) * 0.5f, UpAlong(To - From), FVector(H * 0.06f, H * 0.06f, Length),
@@ -533,6 +551,7 @@ void UAlienActionComponent::TickDash(float Dt)
 			Alien->SetSpeedMultiplier(1.f);
 			Alien->SetPushStrength(1.f);
 			DustPuff(Feet() + Forward() * CapsuleRadius(), H * 0.45f, 5);
+			Sfx(TEXT("Move.Dash.Skid"));
 		}
 		const float A = FMath::Min(1.f, StepTime / 0.4f);
 		Body->SetActionTransform(FVector::OneVector, FRotator(10.f * (1.f - A), 0.f, 0.f));
@@ -563,6 +582,7 @@ void UAlienActionComponent::TickFlare(float Dt)
 			bTempFlames = true;
 		}
 		FaceViewer();
+		Sfx(TEXT("Move.Flare.Surge"));
 	}
 	const float H = WorldHeight();
 	const float S = Alien->GetScaleFactor();
@@ -586,6 +606,7 @@ void UAlienActionComponent::TickFlare(float Dt)
 		// A fireball flies to the glass on the visitor's side.
 		Counter = 2;
 		MoveDir = TowardViewer();
+		Sfx(TEXT("Move.Flare.Fireball"));
 		const FVector From = HeadTop + MoveDir * CapsuleRadius() - FVector(0.f, 0.f, H * 0.1f);
 		const float Distance = FMath::Max(5.f, DistanceToGlass(From, MoveDir, 0.f) + 2.f * S);
 		const float Speed = 120.f * S;
@@ -617,6 +638,7 @@ void UAlienActionComponent::TickFlare(float Dt)
 		{
 			Counter = 3;
 			SpawnFx(EFx::Ring, TargetPoint, UpAlong(MoveDir), FVector(H * 0.15f), FVector(H * 0.7f), EmberColor, 0.5f, 0.85f, 3.f);
+			SfxAt(TEXT("Move.Flare.Impact"), TargetPoint);
 			Burst(TargetPoint, 10, H * 0.025f, H * 1.4f, EmberColor, 0.6f, H * 2.f, 0.3f);
 			Blast(TargetPoint, H * 0.9f, 80.f * S, FVector::ZeroVector, 0.4f);
 		}
@@ -669,6 +691,8 @@ void UAlienActionComponent::TickFlex(float Dt)
 			const FVector Chest = Feet() + FVector(0.f, 0.f, H * 0.55f);
 			const float Aura = FitInCase(Chest, H * 1.3f);
 			SpawnFx(EFx::Ring, Chest, FQuat::Identity, FVector(Aura * 0.35f), FVector(Aura), ActionColor, 0.45f, 0.55f, 2.5f);
+			Voice(EAlienVoice::Effort, 0.9f);
+			Sfx(TEXT("Move.Flex.Aura"), 0.6f);
 		}
 		if (StepTime >= 1.95f)
 		{
@@ -687,6 +711,7 @@ void UAlienActionComponent::TickFlex(float Dt)
 			GroundRing(At, H * 0.2f, H * 2.f, ActionColor, 0.5f, 0.6f);
 			DustPuff(At, H * 0.5f, 8);
 			Blast(At, H * 3.5f, 150.f * S, FVector::ZeroVector, 0.7f); // everything nearby jumps
+			Sfx(TEXT("Move.Stomp"));
 			NextStep();
 		}
 		break;
@@ -718,6 +743,10 @@ void UAlienActionComponent::TickCrystalBurst(float Dt)
 	{
 	case 0: // wind up
 	{
+		if (bEnter)
+		{
+			Sfx(TEXT("Move.Crystal.Charge"));
+		}
 		const float A = FMath::Min(1.f, StepTime / 0.4f);
 		Body->SetActionTransform(FVector(1.f + 0.03f * A, 1.f + 0.03f * A, 1.f - 0.1f * A), FRotator(-8.f * A, 0.f, 0.f));
 		if (A >= 1.f)
@@ -758,6 +787,8 @@ void UAlienActionComponent::TickCrystalBurst(float Dt)
 			Burst(Center + FVector(0.f, 0.f, H * 0.2f), 10, H * 0.025f, H * 1.1f, ActionColor, 0.9f, H * 0.6f, 1.f);
 			GroundRing(Center, H * 0.3f, H * 2.2f, ActionColor, 0.5f, 0.6f);
 			Blast(Center, H * 3.f, 110.f * Alien->GetScaleFactor(), FVector::ZeroVector, 0.8f);
+			Sfx(TEXT("Move.Crystal.Burst"));
+			Voice(EAlienVoice::Effort, 0.8f);
 		}
 		const float A = FMath::Min(1.f, StepTime / 0.3f);
 		const float Width = FMath::Lerp(1.03f, 1.f, A);
@@ -800,6 +831,7 @@ void UAlienActionComponent::TickPhase(float Dt)
 			Puff();
 			SpawnAfterImage(0.6f, 0.5f);
 			SetGhost(true); // passes through loose props
+			Sfx(TEXT("Move.Phase.Out"));
 		}
 		if (StepTime >= 0.1f && Body->IsBodyVisible())
 		{
@@ -818,7 +850,11 @@ void UAlienActionComponent::TickPhase(float Dt)
 			}
 		}
 		break;
-	case 1: // drift unseen, leaving wisps
+	case 1: // drift unseen, leaving wisps - and whispering from wherever he is
+		if (bEnter)
+		{
+			Voice(EAlienVoice::Call, 0.8f);
+		}
 		Timer += Dt;
 		if (Timer >= 0.12f)
 		{
@@ -838,6 +874,7 @@ void UAlienActionComponent::TickPhase(float Dt)
 		if (bEnter)
 		{
 			Puff();
+			Sfx(TEXT("Move.Phase.In"));
 		}
 		if (StepTime >= 0.3f && !Body->IsBodyVisible())
 		{
@@ -880,6 +917,7 @@ void UAlienActionComponent::TickScream(float Dt)
 			Counter = 0;
 			Timer = 0.2f; // first ring right away
 			NextStep();
+			Sfx(TEXT("Move.Scream"));
 		}
 		break;
 	}
@@ -944,6 +982,7 @@ void UAlienActionComponent::TickHowl(float Dt)
 		if (bEnter)
 		{
 			FaceViewer();
+			Sfx(TEXT("Move.HowlStart"));
 			Amount = Body->PlayClip(EAlienClip::SpecialStart, false, 0.2f);
 			if (Amount <= 0.f)
 			{
@@ -969,6 +1008,7 @@ void UAlienActionComponent::TickHowl(float Dt)
 		{
 			Body->PlayClip(EAlienClip::SpecialLoop, true, 0.1f);
 			Alien->SetExcited(true);
+			Sfx(TEXT("Move.Howl"));
 		}
 		Timer += Dt;
 		if (!Body->HasClips())
@@ -1070,6 +1110,7 @@ void UAlienActionComponent::TickClone(float Dt)
 			const float Size = FitInCase(Middle, H * 1.1f);
 			SpawnFx(EFx::Sphere, Middle, FQuat::Identity, FVector(Size * 0.3f), FVector(Size), Flash, 0.35f, 0.7f, 3.f);
 			Alien->SetExcited(true);
+			Sfx(TEXT("Move.Clone.Split"));
 		}
 		Out = EaseOut(StepTime / 0.45f);
 		if (StepTime >= 0.45f)
@@ -1085,6 +1126,10 @@ void UAlienActionComponent::TickClone(float Dt)
 		}
 		break;
 	case 2: // merge
+		if (bEnter)
+		{
+			Sfx(TEXT("Move.Clone.Merge"));
+		}
 		Out = 1.f - EaseInOut(StepTime / 0.45f);
 		if (StepTime >= 0.45f)
 		{
@@ -1176,6 +1221,7 @@ void UAlienActionComponent::TickSpit(float Dt)
 		{
 			Food->SetSimulatePhysics(false);
 			Food->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+			Sfx(TEXT("Move.Spit.Chomp"));
 			EatenStart = Food->GetComponentLocation();
 			EatenScale = Food->GetComponentScale();
 		}
@@ -1186,6 +1232,7 @@ void UAlienActionComponent::TickSpit(float Dt)
 		if (A >= 1.f)
 		{
 			FinishEating();
+			Sfx(TEXT("Move.Spit.Gulp"));
 			NextStep();
 		}
 		break;
@@ -1195,6 +1242,7 @@ void UAlienActionComponent::TickSpit(float Dt)
 		if (bEnter)
 		{
 			FaceViewer();
+			Sfx(TEXT("Move.Spit.Swell"));
 		}
 		const float A = FMath::Min(1.f, StepTime / 0.7f);
 		const float Gulp = Bell(FMath::Min(1.f, StepTime / 0.3f)) * 0.08f;
@@ -1213,6 +1261,7 @@ void UAlienActionComponent::TickSpit(float Dt)
 			const FVector Dir = Forward();
 			LaunchPhysicsBall(Mouth + Dir * H * 0.08f, (Dir * 160.f + FVector(0.f, 0.f, 120.f)) * S, H * 0.2f, ActionColor, 3.5f, H * 0.9f, 100.f * S);
 			Burst(Mouth, 6, H * 0.03f, H * 1.5f, ActionColor, 0.5f, H * 3.f, 0.3f);
+			Sfx(TEXT("Move.Spit.Spit"));
 		}
 		const float A = FMath::Min(1.f, StepTime / 0.35f);
 		const float Width = FMath::Lerp(1.15f, 1.f, EaseOut(A));
@@ -1274,6 +1323,7 @@ void UAlienActionComponent::TickPounce(float Dt)
 				return;
 			}
 			Alien->TurnToward(TargetPoint);
+			Sfx(TEXT("Move.Pounce.Sniff"), 0.8f);
 		}
 		const float Sniff = FMath::Sin(StepTime * 16.f) * Bell(StepTime / 1.2f);
 		Body->SetActionTransform(FVector::OneVector, FRotator(-5.f + 6.f * Sniff, 0.f, 0.f));
@@ -1298,6 +1348,10 @@ void UAlienActionComponent::TickPounce(float Dt)
 	}
 	case 1: // crouch, then leap
 	{
+		if (bEnter)
+		{
+			Voice(EAlienVoice::Effort);
+		}
 		const float A = FMath::Min(1.f, StepTime / 0.35f);
 		Body->SetActionTransform(FVector(1.f + 0.05f * A, 1.f + 0.05f * A, 1.f - 0.18f * A), FRotator(-10.f * A, 0.f, 0.f));
 		if (A >= 1.f)
@@ -1309,6 +1363,7 @@ void UAlienActionComponent::TickPounce(float Dt)
 			const float Gravity = FMath::Abs(Alien->GetCharacterMovement()->GetGravityZ());
 			const float Flight = FMath::Clamp(Distance / (110.f * S), 0.35f, 0.7f);
 			Alien->LaunchCharacter(To.GetSafeNormal() * (Distance / Flight) + FVector(0.f, 0.f, 0.5f * Gravity * Flight), true, true);
+			Sfx(TEXT("Move.Pounce.Leap"));
 			if (bWater)
 			{
 				GroundRing(FVector(Feet().X, Feet().Y, WaterSurfaceZ()), H * 0.3f, H * 1.4f, DustColor(), 0.5f, 0.6f);
@@ -1334,11 +1389,13 @@ void UAlienActionComponent::TickPounce(float Dt)
 				const FVector Surface(At.X, At.Y, WaterSurfaceZ());
 				GroundRing(Surface, H * 0.3f, H * 1.8f, DustColor(), 0.6f, 0.7f);
 				Burst(Surface, 10, H * 0.03f, H * 1.6f, DustColor(), 0.6f, 900.f * S, 1.6f);
+				SfxAt(TEXT("Move.Splash"), Surface);
 			}
 			else
 			{
 				GroundRing(At, H * 0.3f, H * 1.6f, DustColor(), 0.5f, 0.7f);
 				DustPuff(At, H * 0.4f, 6);
+				Sfx(TEXT("Move.Land"));
 			}
 			Blast(At, CapsuleRadius() * 3.f + H, 120.f * S, FVector::ZeroVector, 0.5f);
 			NextStep();
@@ -1397,6 +1454,11 @@ void UAlienActionComponent::TickVines(float Dt)
 	}
 	case 1: // lash out
 	{
+		if (bEnter)
+		{
+			Sfx(TEXT("Move.Vine.Lash"));
+			Voice(EAlienVoice::Effort, 0.8f);
+		}
 		const float A = FMath::Min(1.f, StepTime / 0.45f);
 		UpdateVines(EaseOut(A));
 		if (A >= 1.f)
@@ -1417,6 +1479,7 @@ void UAlienActionComponent::TickVines(float Dt)
 			Counter = 1;
 			const FVector Throw = RandomFlat(Rng) * Rng.FRandRange(40.f, 80.f) * S + FVector(0.f, 0.f, 170.f * S);
 			LaunchPhysicsBall(Feet() + FVector(0.f, 0.f, H * 0.8f), Throw, H * 0.12f, FLinearColor(0.45f, 0.35f, 0.08f), 1.6f, H * 1.1f, 140.f * S);
+			Sfx(TEXT("Move.Seed.Throw"));
 		}
 		if (StepTime >= 1.4f)
 		{
@@ -1425,6 +1488,10 @@ void UAlienActionComponent::TickVines(float Dt)
 		break;
 	case 3: // pull back
 	{
+		if (bEnter)
+		{
+			Sfx(TEXT("Move.Vine.Retract"));
+		}
 		const float A = FMath::Min(1.f, StepTime / 0.45f);
 		UpdateVines(1.f - EaseInOut(A));
 		Body->SetActionTransform(FVector(1.05f - 0.05f * A));
@@ -1480,6 +1547,7 @@ void UAlienActionComponent::TickMelt(float Dt)
 		if (bEnter)
 		{
 			EnsurePuddle();
+			Sfx(TEXT("Move.Melt.Down"));
 		}
 		const float A = FMath::Min(1.f, StepTime / 0.5f);
 		const float M = A * A;
@@ -1545,6 +1613,7 @@ void UAlienActionComponent::TickMelt(float Dt)
 			}
 			Body->SetBodyVisible(true);
 			GroundRing(Feet(), R, R * 3.5f, ActionColor, 0.5f, 0.8f);
+			Sfx(TEXT("Move.Melt.Up"));
 		}
 		const float A = FMath::Min(1.f, StepTime / 0.6f);
 		const float Width = FMath::Lerp(1.5f, 1.f, EaseOut(A));
@@ -1582,6 +1651,11 @@ void UAlienActionComponent::TickScurry(float Dt)
 		}
 		++Counter;
 		Alien->LaunchCharacter(FVector(0.f, 0.f, 95.f * FMath::Sqrt(Alien->GetScaleFactor())), false, true);
+		Sfx(TEXT("Move.Scurry.Hop"), 0.8f);
+		if (Counter == 1)
+		{
+			Voice(EAlienVoice::Effort);
+		}
 		DustPuff(Feet(), WorldHeight() * 0.4f, 3);
 	}
 	Body->SetActionTransform(FVector(1.f, 1.f, 1.f + 0.05f * FMath::Sin(ActionTime * 30.f)), FRotator(-12.f, 0.f, 0.f));
@@ -1631,6 +1705,11 @@ void UAlienActionComponent::TickFly(float Dt)
 			SetGhost(true); // flies over the props
 			Alien->SetExcited(true);
 			GroundRing(Feet(), H * 0.3f, H * 1.4f, DustColor(), 0.6f, 0.6f);
+			Sfx(TEXT("Move.Fly.TakeOff"));
+			if (UAlienSoundComponent* Sounds = Alien->GetSounds())
+			{
+				Sounds->SetLoopBoost(2.4f, 1.18f);
+			}
 			DustPuff(Feet(), H * 0.4f, 5);
 		}
 		const float A = FMath::Min(1.f, StepTime / 0.8f);
@@ -1677,6 +1756,11 @@ void UAlienActionComponent::TickFly(float Dt)
 		if (bEnter)
 		{
 			SavedPoint.Z = Body->GetExtraLift();
+			Sfx(TEXT("Move.Fly.Land"));
+			if (UAlienSoundComponent* Sounds = Alien->GetSounds())
+			{
+				Sounds->SetLoopBoost(1.f, 1.f);
+			}
 		}
 		const float A = FMath::Min(1.f, StepTime / 0.8f);
 		Body->SetExtraLift(static_cast<float>(SavedPoint.Z) * (1.f - EaseInOut(A)));
@@ -2292,6 +2376,10 @@ void UAlienActionComponent::UpdateFootsteps(float Dt)
 	}
 	FootstepDistance = 0.f;
 	bLeftFoot = !bLeftFoot;
+	if (UAlienSoundComponent* Sounds = Alien->GetSounds())
+	{
+		Sounds->PlayFootstep();
+	}
 	const FVector Foot = Feet() + Alien->GetActorRightVector() * ((bLeftFoot ? -0.12f : 0.12f) * H);
 	switch (HomeWorld->Ground)
 	{
@@ -2316,6 +2404,34 @@ void UAlienActionComponent::UpdateFootsteps(float Dt)
 		}
 		break;
 	}
+	}
+}
+
+// ---------------------------------------------------------------------------------------------
+// Sounds
+// ---------------------------------------------------------------------------------------------
+
+void UAlienActionComponent::Sfx(FName Name, float Volume, float Pitch)
+{
+	if (UAlienSoundComponent* Sounds = Alien ? Alien->GetSounds() : nullptr)
+	{
+		Sounds->PlayEffect(Name, Volume, Pitch);
+	}
+}
+
+void UAlienActionComponent::SfxAt(FName Name, const FVector& At, float Volume)
+{
+	if (UAlienSoundComponent* Sounds = Alien ? Alien->GetSounds() : nullptr)
+	{
+		Sounds->PlayEffectAt(Name, At, Volume);
+	}
+}
+
+void UAlienActionComponent::Voice(EAlienVoice Kind, float Volume)
+{
+	if (UAlienSoundComponent* Sounds = Alien ? Alien->GetSounds() : nullptr)
+	{
+		Sounds->PlayVoice(Kind, Volume);
 	}
 }
 
@@ -2560,6 +2676,7 @@ void UAlienActionComponent::PopPhysicsBall()
 		Burst(At, 8, Size * 0.3f, Size * 5.f, PhysicsBallColor, 0.55f, 500.f * S, 0.8f);
 		SpawnFx(EFx::Sphere, At, FQuat::Identity, FVector(Size), FVector(Size * 3.f), PhysicsBallColor, 0.3f, 0.6f, 3.f);
 		Blast(At, PhysicsBallPopRadius, PhysicsBallPopSpeed, FVector::ZeroVector, 0.6f);
+		SfxAt(Current == EAlienAction::Vines ? TEXT("Move.Seed.Pop") : TEXT("Move.Energy.Pop"), At);
 	}
 	PhysicsBall->SetSimulatePhysics(false);
 	PhysicsBall->SetCollisionEnabled(ECollisionEnabled::NoCollision);

@@ -15,6 +15,7 @@
 class UAlienDataAsset;
 class UAlienAppearanceComponent;
 class UAlienActionComponent;
+class UAlienSoundComponent;
 class UStaticMeshComponent;
 class UMaterialInstanceDynamic;
 class AAlienChamber;
@@ -42,6 +43,10 @@ public:
 
 	UFUNCTION(BlueprintPure, Category = "Alien")
 	UAlienActionComponent* GetActions() const { return Actions; }
+
+	/** Its voice, footsteps and move sounds. */
+	UFUNCTION(BlueprintPure, Category = "Alien")
+	UAlienSoundComponent* GetSounds() const { return Sounds; }
 
 	// ---- Movement API used by AAlienAIController ----
 
@@ -114,6 +119,9 @@ protected:
 	/** Signature moves and their effects. */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Alien")
 	TObjectPtr<UAlienActionComponent> Actions;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Alien")
+	TObjectPtr<UAlienSoundComponent> Sounds;
 
 	/** Cheap fake contact shadow: a soft dark disc under the feet (no dynamic shadows on Quest). */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Alien")

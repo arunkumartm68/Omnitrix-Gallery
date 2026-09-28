@@ -1,6 +1,7 @@
 // Alien Museum - the floating holographic "Alien Collection" panel.
 
 #include "UI/AlienCollectionPanel.h"
+#include "Core/MuseumAudio.h"
 #include "Aliens/AlienAppearanceComponent.h"
 #include "Core/MuseumAssets.h"
 #include "Core/MuseumDirector.h"
@@ -277,6 +278,13 @@ void AAlienCollectionPanel::Summon(const FVector& HeadLocation, const FRotator& 
 
 void AAlienCollectionPanel::SetPanelVisible(bool bVisible)
 {
+	if (bVisible != bPanelVisible && HasActorBegunPlay())
+	{
+		if (UMuseumAudio* Audio = UMuseumAudio::Get(this))
+		{
+			Audio->PlayAt(bVisible ? TEXT("UI.Open") : TEXT("UI.Close"), GetActorLocation());
+		}
+	}
 	bPanelVisible = bVisible;
 	SetActorHiddenInGame(!bVisible);
 	SetActorEnableCollision(bVisible);
@@ -300,6 +308,13 @@ void AAlienCollectionPanel::SetSelectedAlien(UAlienDataAsset* Alien)
 
 void AAlienCollectionPanel::OnPointerHover(UPrimitiveComponent* HitComponent, bool bHovered)
 {
+	if (bHovered && HitComponent && HitComponent != HoveredComponent.Get() && HitComponent != BackgroundHit)
+	{
+		if (UMuseumAudio* Audio = UMuseumAudio::Get(this))
+		{
+			Audio->PlayAt(TEXT("UI.Hover"), HitComponent->GetComponentLocation(), 0.6f);
+		}
+	}
 	if (bHovered)
 	{
 		HoveredComponent = HitComponent;
@@ -324,6 +339,7 @@ bool AAlienCollectionPanel::OnPointerSelect(UPrimitiveComponent* HitComponent, A
 		{
 			UAlienDataAsset* Alien = Collection->Aliens[Card.AlienIndex];
 			SetSelectedAlien(Alien);
+			PlayPanelSound(TEXT("UI.Click"), HitComponent);
 			Pawn->BeginPlaceAlien(Alien);
 			return true;
 		}
@@ -331,12 +347,14 @@ bool AAlienCollectionPanel::OnPointerSelect(UPrimitiveComponent* HitComponent, A
 
 	if (HitComponent == AddButton.Hit)
 	{
+		PlayPanelSound(TEXT("UI.Click"), HitComponent);
 		SetSelectedAlien(nullptr);
 		Pawn->BeginPlaceChamber();
 		return true;
 	}
 	if (HitComponent == ClearButton.Hit)
 	{
+		PlayPanelSound(TEXT("UI.Confirm"), HitComponent);
 		SetSelectedAlien(nullptr);
 		Pawn->CancelPlacement();
 		if (AMuseumDirector* Director = AMuseumDirector::Get(this))
@@ -357,11 +375,20 @@ bool AAlienCollectionPanel::OnPointerSelect(UPrimitiveComponent* HitComponent, A
 	{
 		const int32 Pages = GetPageCount();
 		Page = (Page + (HitComponent == NextButton.Hit ? 1 : Pages - 1)) % Pages;
+		PlayPanelSound(TEXT("UI.Page"), HitComponent);
 		RefreshCards();
 		return true;
 	}
 
 	return HitComponent == BackgroundHit; // swallow presses on the panel background
+}
+
+void AAlienCollectionPanel::PlayPanelSound(FName Name, const UPrimitiveComponent* At) const
+{
+	if (UMuseumAudio* Audio = UMuseumAudio::Get(this))
+	{
+		Audio->PlayAt(Name, At ? At->GetComponentLocation() : GetActorLocation());
+	}
 }
 
 void AAlienCollectionPanel::Tick(float DeltaSeconds)

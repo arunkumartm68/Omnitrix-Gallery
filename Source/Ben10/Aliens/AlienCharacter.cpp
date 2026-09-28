@@ -4,6 +4,7 @@
 #include "Aliens/AlienAppearanceComponent.h"
 #include "Aliens/AlienActionComponent.h"
 #include "Aliens/AlienAIController.h"
+#include "Aliens/AlienSoundComponent.h"
 #include "Chamber/AlienChamber.h"
 #include "Data/AlienDataAsset.h"
 #include "Ben10.h"
@@ -49,6 +50,7 @@ AAlienCharacter::AAlienCharacter()
 	Appearance->SetRelativeLocation(FVector(0.f, 0.f, -16.f));
 
 	Actions = CreateDefaultSubobject<UAlienActionComponent>(TEXT("Actions"));
+	Sounds = CreateDefaultSubobject<UAlienSoundComponent>(TEXT("Sounds"));
 
 	static ConstructorHelpers::FObjectFinder<UStaticMesh> PlaneFinder(TEXT("/Engine/BasicShapes/Plane.Plane"));
 	ContactShadow = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("ContactShadow"));
@@ -146,6 +148,7 @@ void AAlienCharacter::InitializeAlien(UAlienDataAsset* InData, AAlienChamber* In
 
 	ApplyScaleDependentSettings();
 	Actions->Setup(AlienData);
+	Sounds->Setup(AlienData);
 
 	UE_LOG(LogAlienMuseum, Log, TEXT("Alien %s initialised (height %.0f cm, chamber %s)"),
 		*AlienData->AlienId.ToString(), ModelHeight, InChamber ? *InChamber->GetName() : TEXT("none"));
@@ -449,6 +452,8 @@ void AAlienCharacter::BeginExamine()
 	{
 		Brain->NotifyHeld(true);
 	}
+	Sounds->PlayEffect(TEXT("Alien.PickUp"), 0.8f);
+	Sounds->PlayVoice(EAlienVoice::Held);
 }
 
 void AAlienCharacter::SetExamineTarget(const FVector& Location, const FQuat& Rotation, float Zoom)
@@ -488,6 +493,7 @@ void AAlienCharacter::EndExamine()
 	}
 	bExamined = false;
 	bReturning = true;
+	Sounds->PlayEffect(TEXT("Alien.Return"));
 	ReturnFrom = GetActorTransform();
 	ReturnTime = 0.f;
 	ReturnDuration = FMath::Clamp(static_cast<float>(FVector::Dist(Location, GetReturnPoint())) / 120.f, 0.6f, 1.6f);
@@ -571,6 +577,10 @@ void AAlienCharacter::SettleInCase(const FVector& WorldLocation)
 void AAlienCharacter::Landed(const FHitResult& Hit)
 {
 	Super::Landed(Hit);
+	if (!Actions->IsPerforming())
+	{
+		Sounds->PlayFootstep(1.3f);
+	}
 	if (bCelebrateOnLanding)
 	{
 		bCelebrateOnLanding = false;

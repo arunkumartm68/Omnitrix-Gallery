@@ -11,6 +11,7 @@ from a holographic collection - imported 3D models (the downloaded Ben 10 aliens
 UAlienDataAsset (DA_Model_*, DA_Classic_*, DA_Alien_*)   identity, look, behaviour, habitat, signature moves
    └─ AAlienCharacter (BP_AlienCharacter)      body (UAlienAppearanceComponent), movement, containment
         ├─ UAlienActionComponent               signature moves + effects (head flames, speed trails)
+        ├─ UAlienSoundComponent                its voice, footsteps, move sounds (through UMuseumAudio)
         └─ AAlienAIController                  state machine: Idle / Wander / LookAround / ReactToPlayer /
              │                                 Performing / Held
              └─ CharacterMovementComponent     direct steering inside the chamber (no navmesh needed)
@@ -25,6 +26,7 @@ AAlienChamber (BP_AlienChamber)                   Shape: Box (tall display case,
    ├─ HoverGlow (anti-gravity glow, only while floating in the air)
    ├─ InfoRoot (holographic info panel)
    ├─ InteriorLight (optional real light, off by default)
+   ├─ ambience sound (its occupant's home world, or a soft hum; heard up close)
    └─ spatial anchor component (added at runtime by UMuseumPersistenceComponent)
 
 AMuseumDirector (BP_MuseumDirector, one per level)
@@ -32,6 +34,7 @@ AMuseumDirector (BP_MuseumDirector, one per level)
    └─ UMuseumPersistenceComponent  save game + Meta spatial anchors
 AMuseumPawn (BP_MuseumPawn)       camera, controllers, 2 × UMuseumHandInteractor (controller / hand / desktop)
 AAlienCollectionPanel             3D holographic collection UI (cards, buttons)
+UMuseumAudio (world subsystem)    plays every sound in 3D (Resonance Audio), glass muffling, who may call out
 ```
 
 Start-up flow: passthrough → spatial-data permission → MRUK loads the room (launches Space Setup if
@@ -44,16 +47,16 @@ run) → Alien Collection panel appears in front of the player.
 |---|---|
 | Module | `Source/Ben10/Ben10.Build.cs`, `Source/Ben10.Target.cs`, `Source/Ben10Editor.Target.cs` |
 | Early XR module | `Source/Ben10XR/` – `Ben10XR` (loading phase *PostConfigInit*), `MuseumOpenXRLayer` (keeps OpenXR frame synthesis off, see *Deploy to Quest 3S*) |
-| Core | `Source/Ben10/Core/` – `MuseumDirector`, `MuseumGameMode`, `MuseumAssets`, `MuseumInteractable`, `MuseumTypes` |
-| Data | `Source/Ben10/Data/` – `AlienDataAsset`, `AlienCollectionAsset`, `ChamberHabitatAsset` |
-| Aliens | `Source/Ben10/Aliens/` – `AlienCharacter`, `AlienAIController`, `AlienAppearanceComponent`, `AlienActionComponent` |
+| Core | `Source/Ben10/Core/` – `MuseumDirector`, `MuseumGameMode`, `MuseumAssets`, `MuseumAudio`, `MuseumInteractable`, `MuseumTypes` |
+| Data | `Source/Ben10/Data/` – `AlienDataAsset`, `AlienCollectionAsset`, `ChamberHabitatAsset`, `MuseumSoundLibrary` |
+| Aliens | `Source/Ben10/Aliens/` – `AlienCharacter`, `AlienAIController`, `AlienAppearanceComponent`, `AlienActionComponent`, `AlienSoundComponent` |
 | Chamber | `Source/Ben10/Chamber/` – `AlienChamber`, `ChamberHabitatComponent` |
 | Mixed reality | `Source/Ben10/MR/` – `MuseumSceneComponent`, `MuseumPersistenceComponent`, `MuseumSaveGame` |
 | Interaction | `Source/Ben10/Interaction/` – `MuseumPawn`, `MuseumHandInteractor` |
 | UI | `Source/Ben10/UI/AlienCollectionPanel` |
 | Content | `Content/AlienMuseum/` – `Maps/L_AlienMuseum`, `Blueprints/BP_*`, `Data/DA_*`, `Data/Classic/DA_Classic_*`, `Data/Models/DA_Model_*`, `Data/Habitats/HAB_*`, `Models/<Id>/` (imported meshes, materials, textures), `Materials/M_*` |
-| Tools | `Scripts/create_classic_aliens.py` – shape-built classic aliens; `Scripts/blender_inspect_models.py`, `Scripts/blender_convert_models.py`, `Scripts/blender_models_common.py` – downloaded models → Unreal-ready `.glb`; `Scripts/blender_pose_models.py` – re-poses rig-less models (Four Arms' flex, relaxed Four Arms and Wildvine); `Scripts/import_downloaded_models.py` – `.glb` → meshes + `DA_Model_*` + collection; `Scripts/blender_convert_omnitrix.py` + `Scripts/import_omnitrix.py` – the classic Omnitrix watch (band / core / face, `Models/Omnitrix/`); `Scripts/create_habitats_and_moves.py` – habitats, signature moves, pose / ball meshes; `Scripts/create_museum_materials.py` – glass, habitat and effect materials; `Scripts/create_input_assets.py` – the player's input actions and mapping context (`/Game/AlienMuseum/Input`) |
-| Source art | `SourceArt/` (not in git): `Downloaded/` (unzipped downloads), `Converted/` (`.glb`, previews, `manifest.json`, `poses.json`) |
+| Tools | `Scripts/create_classic_aliens.py` – shape-built classic aliens; `Scripts/blender_inspect_models.py`, `Scripts/blender_convert_models.py`, `Scripts/blender_models_common.py` – downloaded models → Unreal-ready `.glb`; `Scripts/blender_pose_models.py` – re-poses rig-less models (Four Arms' flex, relaxed Four Arms and Wildvine); `Scripts/import_downloaded_models.py` – `.glb` → meshes + `DA_Model_*` + collection; `Scripts/blender_convert_omnitrix.py` + `Scripts/import_omnitrix.py` – the classic Omnitrix watch (band / core / face, `Models/Omnitrix/`); `Scripts/create_habitats_and_moves.py` – habitats, signature moves, pose / ball meshes; `Scripts/create_museum_materials.py` – glass, habitat and effect materials; `Scripts/create_input_assets.py` – the player's input actions and mapping context (`/Game/AlienMuseum/Input`); `Scripts/make_museum_sounds.py` (system Python + numpy/scipy) – synthesises every sound; `Scripts/import_museum_sounds.py` – imports them (`/Game/AlienMuseum/Audio`), the ranges' attenuation, `DA_MuseumSounds` and each alien's voice |
+| Source art | `SourceArt/` (not in git): `Downloaded/` (unzipped downloads), `Converted/` (`.glb`, previews, `manifest.json`, `poses.json`), `Sounds/` (the synthesised `.wav` + `sounds.json`) |
 
 ## Build
 
@@ -243,6 +246,39 @@ Sources for the moves: [Cannonbolt (Ben 10 Wiki)](https://ben10.fandom.com/wiki/
 [CBR: original aliens ranked](https://www.cbr.com/ben-10-original-aliens-ranked/),
 [VS Battles: Ben 10 (Classic)](https://vsbattles.fandom.com/wiki/Ben_10_(Classic)).
 
+## Sound
+
+Every sound is original: `Scripts/make_museum_sounds.py` synthesises them from oscillators, noise, filters and
+envelopes (nothing recorded, downloaded or taken from the show). The aliens' voices are a glottal source
+shaped by formants and roughened into growls, snarls, whispers, chirps and hums, one set per species;
+footsteps, moves, cases, glass, panel and Omnitrix sounds are impacts, whooshes, struck (modal) objects
+and FM tones. Random seeds are fixed, so the same files come out every run.
+
+* **3D** – Resonance Audio (Google's plugin, part of UE 5.7) renders every sound binaurally with HRTF:
+  you hear an alien above, behind or beside you, and where in the room its case is. Three ranges
+  (`ATT_MuseumRoom` – aliens and moves, full volume within 80 cm, fading out by ~8 m and a little duller
+  far away; `ATT_MuseumNear` – footsteps, a case's ambience, Stinkfly's wings, about 2 m; `ATT_MuseumInterface`
+  – the panel and the watch).
+* **Through the glass** – a sound made inside a case has its highs rolled off and is a little quieter
+  (`GlassCutoff`, `GlassVolume`); an alien in your hand, flying home, or a case you have leaned into sounds clear.
+* **Voices** – each alien calls out now and then (growls, whispers, chirps: `Calls`), greets a visitor who
+  walks up (`Alerts`), strains in its moves (`Efforts`) and squeals, giggles or grumbles when picked up
+  (`Held`). To keep the museum from getting noisy, only the `CallingAliens` (2) nearest to you call out
+  on their own, never within `CallGap` (4 s) of another call, never beyond `HearingDistance`, and never the
+  same clip twice in a row. Footsteps play within `FootstepDistance` only (a splash in water).
+* **Moves** – every signature move is scored at the moment its effects fire: Cannonbolt's plates clack as
+  he curls, the ball rumbles and bonks off the glass; XLR8 zips and skids; Four Arms strains on every pump
+  and his stomp booms; Diamondhead's crystals crackle up; Ghostfreak whispers while he drifts unseen;
+  Echo Echo's four screams match his four rings; Benwolf's howl carries eight sonic pulses; Upchuck
+  chomps, gulps, gurgles and spits; the pounce sniffs, snarls, leaps and lands (or splashes).
+* **Cases** – each case plays its occupant's home world, heard up close: bubbles (ocean, swamp), wind and mist
+  (Luna Lobo, the graveyard, Vulpin), crystal chimes (Petropia), insects, tech pulses, embers, or a soft hum
+  when empty. Placing, grabbing, resizing and removing a case, and the panel, have their own sounds.
+* **Rebuild** after changing the synthesis: `python Scripts/make_museum_sounds.py`, then (editor closed, or in
+  the editor's Python) `import_museum_sounds.py`; `--mix-only` just re-applies volumes / ranges / voices.
+  Run the import in the editor if the commandlet reports `Decoder for AudioFormat 'BINKA' not found`
+  (a handled ensure: the headless commandlet has no audio decoder).
+
 ## Tuning without code
 
 * **Aliens** – `Data/DA_Alien_*` and `Data/Classic/DA_Classic_*`: colours, shape, eyes, height, walk speed,
@@ -282,6 +318,11 @@ Sources for the moves: [Cannonbolt (Ben 10 Wiki)](https://ben10.fandom.com/wiki/
   hand), and moves play `SpecialStart` → `SpecialLoop` (Howl), `Special`, `Hit` or `Attack` on top. The
   `Rig`'s head look and sniffing still work on top of the clips. Clip names come from `CLIPS` in
   `Scripts/import_downloaded_models.py`.
+* **Sounds** – `Audio/DA_MuseumSounds`: every shared sound by name (variations, `Volume`, random `Pitch` range,
+  `Range`, `MaxPlaying`), the three attenuations, the glass and the voice rules; an alien's `Sounds` on its data
+  asset: `Calls` / `Alerts` / `Efforts` / `Held` / `Footsteps`, `Loop`, `CallInterval`, `Volume`, `FootstepVolume`,
+  `LoopVolume`, `Pitch` (it also rises a little when its case is scaled down). `Scripts/import_museum_sounds.py`
+  (`MIX`, `VOICES`) sets them all.
 * **Moves** – on any alien data asset: `Habitat`, `SignatureActions`, `ActionChance`, `ActionColor`,
   `bHeadFlames`, `bSpeedTrail`, `PoseMesh` (a second pose of the model shown during Flex) and `BallMesh`
   (the rolled-up form for Roll). `Scripts/create_habitats_and_moves.py` sets them all.
@@ -392,9 +433,17 @@ each (8 cases ≈ 480 000 at most), power-of-two textures ≤ 2048, no Nanite, n
 one movable key light without shadows. Habitats: fixed props instanced (one draw call per kind), about
 3–10 loose physics props per case (asleep when still), ambient effects as one instanced mesh, animated
 only while the case is seen. Moves: pooled effects (≤ 40 per alien), 3 after-images, no particle systems.
+Sound: short sounds compressed with Bink Audio and kept in memory (they start instantly), at most one
+loop per case / alien, and a loop out of range goes silent for free (virtualised) until you come close;
+Resonance renders all sources into one third-order ambisonic mix decoded once for both ears.
 
 ## Known limitations
 
+* The sounds are synthesised, not recorded: creature voices are stylised rather than like real
+  animals or the show. Better recordings can replace any of them - import them in place of the `V_*` /
+  `SFX_*` waves (same names), or point an alien's `Sounds` at others.
+* In the editor, a game in the background is silent (Windows mutes an unfocused app): click into the
+  viewport, or set `[Audio] UnfocusedVolumeMultiplier=1.0` in your local `Saved/Config/WindowsEditor/Engine.ini`.
 * **Depth-API occlusion is not available** with the launcher engine in Native OpenXR mode: in Meta XR 1.205
   `StartEnvironmentDepth` / `SetXROcclusionsMode` only work on Meta's UE fork (`WITH_OCULUS_BRANCH`).
   Occlusion therefore uses the MRUK room model (walls and furniture become Alpha-Holdout occluders).

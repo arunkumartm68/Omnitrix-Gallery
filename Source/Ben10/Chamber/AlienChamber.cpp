@@ -6,7 +6,10 @@
 #include "Aliens/AlienActionComponent.h"
 #include "Data/AlienDataAsset.h"
 #include "Core/MuseumAssets.h"
+#include "Core/MuseumAudio.h"
+#include "Data/ChamberHabitatAsset.h"
 #include "Ben10.h"
+#include "Components/AudioComponent.h"
 #include "Components/BoxComponent.h"
 #include "Components/CapsuleComponent.h"
 #include "Components/InstancedStaticMeshComponent.h"
@@ -596,6 +599,7 @@ void AAlienChamber::BeginPlay()
 		ChamberId = FGuid::NewGuid();
 	}
 	SetInfoPanelVisible(false);
+	UpdateAmbience(true);
 }
 
 void AAlienChamber::EndPlay(const EEndPlayReason::Type EndPlayReason)
@@ -604,6 +608,11 @@ void AAlienChamber::EndPlay(const EEndPlayReason::Type EndPlayReason)
 	{
 		Occupant->Destroy();
 		Occupant = nullptr;
+	}
+	if (AmbienceAudio)
+	{
+		AmbienceAudio->Stop();
+		AmbienceAudio = nullptr;
 	}
 	Super::EndPlay(EndPlayReason);
 }
@@ -681,6 +690,7 @@ AAlienCharacter* AAlienChamber::SpawnAlien(UAlienDataAsset* Data)
 	RefreshInfoText();
 	SetInfoPanelVisible(true);
 	PulseTime = 1.2f; // welcome light pulse
+	UpdateAmbience(true);
 	OnOccupantChanged.Broadcast(this);
 	return Alien;
 }
@@ -701,6 +711,10 @@ void AAlienChamber::RemoveAlien()
 	RefreshInfoText();
 	if (bChanged)
 	{
+		if (HasActorBegunPlay())
+		{
+			UpdateAmbience(true);
+		}
 		OnOccupantChanged.Broadcast(this);
 	}
 }
@@ -847,6 +861,54 @@ void AAlienChamber::RebuildHabitat()
 		KeepHabitatClearOfOccupant();
 		Habitat->Rebuild(GetInnerHalfLocal(), BaseHeight, GlassHeight);
 	}
+}
+
+void AAlienChamber::UpdateAmbience(bool bRestart)
+{
+	UMuseumAudio* Audio = UMuseumAudio::Get(this);
+	if (!Audio)
+	{
+		return;
+	}
+	FVector Listener;
+	const bool bBehindGlass = !(Audio->GetListener(Listener) && DistanceToChamber(Listener) <= 0.f);
+	if (!bRestart)
+	{
+		if (AmbienceAudio && bBehindGlass != bAmbienceBehindGlass)
+		{
+			const UMuseumSoundLibrary* Library = Audio->GetLibrary();
+			const float Quieter = Library ? FMath::Max(0.01f, Library->GlassVolume) : 1.f;
+			Audio->SetThroughGlass(AmbienceAudio, bBehindGlass, AmbienceAudio->VolumeMultiplier / (bAmbienceBehindGlass ? Quieter : 1.f));
+			bAmbienceBehindGlass = bBehindGlass;
+		}
+		return;
+	}
+
+	if (AmbienceAudio)
+	{
+		AmbienceAudio->FadeOut(0.4f, 0.f);
+		AmbienceAudio = nullptr;
+	}
+	FName Name = TEXT("Case.Hum");
+	if (const UChamberHabitatAsset* HomeWorld = OccupantData ? OccupantData->Habitat.Get() : nullptr)
+	{
+		switch (HomeWorld->Ambient)
+		{
+		case EHabitatAmbient::Bubbles: Name = TEXT("Amb.Bubbles"); break;
+		case EHabitatAmbient::Embers: Name = TEXT("Amb.Embers"); break;
+		case EHabitatAmbient::Mist: Name = TEXT("Amb.Mist"); break;
+		case EHabitatAmbient::Sparkles: Name = TEXT("Amb.Sparkles"); break;
+		case EHabitatAmbient::Spores: Name = TEXT("Amb.Spores"); break;
+		case EHabitatAmbient::Pulses: Name = TEXT("Amb.Pulses"); break;
+		default: break;
+		}
+	}
+	UMuseumAudio::FPlay How;
+	How.AttachTo = GetRootComponent();
+	How.Location = GetActorTransform().TransformPosition(FVector(0.f, 0.f, BaseHeight + GlassHeight * 0.35f)); // low in the case
+	How.bThroughGlass = bBehindGlass;
+	AmbienceAudio = Audio->Play(Name, How);
+	bAmbienceBehindGlass = bBehindGlass;
 }
 
 void AAlienChamber::KeepHabitatClearOfOccupant()
@@ -1365,6 +1427,13 @@ void AAlienChamber::Tick(float DeltaSeconds)
 	Super::Tick(DeltaSeconds);
 
 	CarryOccupantAlong();
+
+	AmbienceTimer -= DeltaSeconds;
+	if (AmbienceTimer <= 0.f)
+	{
+		AmbienceTimer = 0.25f;
+		UpdateAmbience(false);
+	}
 
 	if (bGrabbed)
 	{

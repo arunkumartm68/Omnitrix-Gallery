@@ -54,6 +54,10 @@
 		{
 			"Name": "EnhancedInput",
 			"Enabled": true
+		},
+		{
+			"Name": "ResonanceAudio",
+			"Enabled": true
 		}
 	],
 	"TargetPlatforms": [
