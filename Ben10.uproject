@@ -5,6 +5,11 @@
 	"Description": "Alien Museum - mixed reality museum for Meta Quest 3S",
 	"Modules": [
 		{
+			"Name": "Ben10XR",
+			"Type": "Runtime",
+			"LoadingPhase": "PostConfigInit"
+		},
+		{
 			"Name": "Ben10",
 			"Type": "Runtime",
 			"LoadingPhase": "Default",

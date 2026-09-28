@@ -43,6 +43,7 @@ run) → Alien Collection panel appears in front of the player.
 | Area | Files |
 |---|---|
 | Module | `Source/Ben10/Ben10.Build.cs`, `Source/Ben10.Target.cs`, `Source/Ben10Editor.Target.cs` |
+| Early XR module | `Source/Ben10XR/` – `Ben10XR` (loading phase *PostConfigInit*), `MuseumOpenXRLayer` (keeps OpenXR frame synthesis off, see *Deploy to Quest 3S*) |
 | Core | `Source/Ben10/Core/` – `MuseumDirector`, `MuseumGameMode`, `MuseumAssets`, `MuseumInteractable`, `MuseumTypes` |
 | Data | `Source/Ben10/Data/` – `AlienDataAsset`, `AlienCollectionAsset`, `ChamberHabitatAsset` |
 | Aliens | `Source/Ben10/Aliens/` – `AlienCharacter`, `AlienAIController`, `AlienAppearanceComponent`, `AlienActionComponent` |
@@ -110,6 +111,32 @@ time never receives them (only hand tracking, which the game reads itself, would
 are assets in `/Game/AlienMuseum/Input` (`IMC_Museum` + `IA_Museum_*`, made by
 `Scripts/create_input_assets.py`), `IMC_Museum` is registered there, and `AMuseumPawn` loads them in its
 constructor. To change a key, edit `MAPPINGS` in the script and re-run it.
+
+**OpenXR frame synthesis is kept off (crash fix).** The Quest runtime offers `XR_FB_space_warp` and
+`XR_EXT_frame_synthesis`. UE 5.7 enables one of them whenever it is offered, even with frame synthesis
+switched off, and then keeps two motion-vector swapchains. Once a skinned mesh is drawn (the rigged
+Wildmutt and Ghostfreak), their image indices drift apart and OpenXRHMD's
+`check(MotionVectorIndex == MotionVectorDepthIndex)` closes the app. That happened when paging the
+collection, placing Wildmutt or starting with his case saved. The museum doesn't use frame synthesis, so
+`FMuseumOpenXRLayer` (an `IOpenXRExtensionPlugin` API layer) removes both extensions from the runtime's
+extension list before the engine sees it.
+
+The engine creates its OpenXR instance before the renderer starts, well before the game module loads. So
+the layer lives in its own module, `Ben10XR`, with loading phase **PostConfigInit**. A layer registered
+from the `Ben10` module comes too late and is silently ignored.
+
+A working build logs:
+`LogHMD: IOpenXRExtensionPlugin API layer enabled: AlienMuseum frame-synthesis filter` and
+`LogMuseumXR: OpenXR: frame-synthesis extensions hidden from the engine`.
+
+If the extensions are ever enabled anyway, `UAlienAppearanceComponent` warns and shows rigged aliens as
+their static models, so they stand still instead of crashing.
+
+**Device logs.** The game log is `/sdcard/Android/data/com.alienmuseum.ben10/files/UnrealGame/Ben10/Ben10/Saved/Logs/Ben10.log`
+(older runs: `Ben10-backup-*.log`). Pull it from PowerShell, because Git Bash rewrites the path:
+`adb pull <path> C:\Games\Ben10\Saved\DeviceLogs\`. To keep a headset that is off your head running for a test:
+`adb shell am broadcast -a com.oculus.vrpowermanager.prox_close`. Undo it afterwards with
+`... automation_disable`.
 
 **Holding an alien (like a pet).** Point at an alien (a gold ring appears at its feet and the laser turns
 gold) and squeeze the **grip** - or reach into the case and grab it, or make a **fist** at it with hand
@@ -328,7 +355,8 @@ Forward shading, multiview, 4× MSAA, dynamic foveation (level High), no Lumen /
 distance fields / Substrate, ASTC-only textures, no dynamic shadows (fake contact shadows), unlit
 emissive "lighting" inside chambers, pillars instanced, alien AI thinks at 5 Hz, alien animation only
 when visible, max 8 chambers. Imported models: static meshes, except the rigged Wildmutt and Ghostfreak
-(skinned meshes with 53 / 44 bones posed in C++ on the game thread, no animation blueprint), ≤ 60 000 triangles
+(skinned meshes with 53 / 44 bones posed in C++ on the game thread, no animation blueprint; the collection's
+cards show their static twins), ≤ 60 000 triangles
 each (8 cases ≈ 480 000 at most), power-of-two textures ≤ 2048, no Nanite, no collision, no shadow casting;
 one movable key light without shadows. Habitats: fixed props instanced (one draw call per kind), about
 3–10 loose physics props per case (asleep when still), ambient effects as one instanced mesh, animated

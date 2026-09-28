@@ -9,6 +9,7 @@
 #include "Engine/SkeletalMesh.h"
 #include "Engine/StaticMesh.h"
 #include "GameFramework/CharacterMovementComponent.h"
+#include "IOpenXRHMDModule.h"
 #include "Materials/MaterialInstanceDynamic.h"
 #include "GameFramework/Actor.h"
 
@@ -40,6 +41,31 @@ namespace
 
 	TAutoConsoleVariable<float> CVarRigTestSpeed(TEXT("Museum.RigTestSpeed"), 0.f,
 		TEXT("Debug: rigged aliens step on the spot as if walking at this speed (cm/s). 0 = off."));
+
+	/**
+	 * Skinned models are only safe on Quest while the OpenXR frame-synthesis extensions are off (the Ben10XR
+	 * module's layer hides them): with one enabled, UE 5.7 keeps motion-vector swapchains whose indices drift
+	 * apart as soon as a skinned mesh is drawn, and OpenXRHMD asserts. If they are on anyway, rigged aliens
+	 * fall back to their static model instead of crashing the app.
+	 */
+	bool RiggedModelsAreSafe()
+	{
+		static const bool bSafe = []()
+		{
+			if (!IOpenXRHMDModule::IsAvailable())
+			{
+				return true;
+			}
+			const IOpenXRHMDModule& XR = IOpenXRHMDModule::Get();
+			const bool bFrameSynthesis = XR.IsExtensionEnabled(TEXT("XR_FB_space_warp")) || XR.IsExtensionEnabled(TEXT("XR_EXT_frame_synthesis"));
+			if (bFrameSynthesis)
+			{
+				UE_LOG(LogAlienMuseum, Warning, TEXT("OpenXR frame synthesis is enabled: rigged aliens use their static models (skinned meshes would crash OpenXRHMD)"));
+			}
+			return !bFrameSynthesis;
+		}();
+		return bSafe;
+	}
 
 	/** The turn that points direction From along direction To. */
 	FQuat TurnBetween(const FVector& From, const FVector& To)
@@ -274,7 +300,7 @@ void UAlienAppearanceComponent::BuildAppearance(const UAlienDataAsset* Data)
 	if (bIsModel)
 	{
 		BuildModelBody(Data, Model);
-		if (bUseRiggedModel && !Data->RiggedMesh.IsNull())
+		if (bUseRiggedModel && !Data->RiggedMesh.IsNull() && RiggedModelsAreSafe())
 		{
 			if (USkeletalMesh* Rigged = Data->RiggedMesh.LoadSynchronous())
 			{

@@ -6,12 +6,15 @@
 // second page) their image indices drift apart and OpenXRHMD's check(MotionVectorIndex ==
 // MotionVectorDepthIndex) kills the app. The museum does not use frame synthesis, so this API layer
 // (IOpenXRExtensionPlugin::InsertOpenXRAPILayer) leaves both extensions out of the runtime's extension
-// list: Unreal never enables them and never creates those swapchains.
+// list: Unreal never enables them and never creates those swapchains. It is registered by the Ben10XR
+// module (loading phase PostConfigInit) because the instance is created before the renderer starts.
 
 #pragma once
 
 #include "CoreMinimal.h"
 #include "IOpenXRExtensionPlugin.h"
+
+DECLARE_LOG_CATEGORY_EXTERN(LogMuseumXR, Log, All);
 
 class FMuseumOpenXRLayer : public IOpenXRExtensionPlugin
 {

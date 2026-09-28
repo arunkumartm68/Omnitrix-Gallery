@@ -35,8 +35,7 @@ public class Ben10 : ModuleRules
 		PrivateDependencyModuleNames.AddRange(new string[]
 		{
 			"AndroidPermission",
-			"OpenXRHMD",        // MR/MuseumOpenXRLayer: IOpenXRExtensionPlugin
-			"AugmentedReality", // included by IOpenXRExtensionPlugin.h
+			"OpenXRHMD",        // IOpenXRHMDModule: are rigged (skinned) models safe to show?
 		});
 		AddEngineThirdPartyPrivateStaticDependencies(Target, "OpenXR");
 	}

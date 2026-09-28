@@ -11,5 +11,6 @@ public class Ben10Target : TargetRules
 		DefaultBuildSettings = BuildSettingsVersion.V6;
 		IncludeOrderVersion = EngineIncludeOrderVersion.Unreal5_7;
 		ExtraModuleNames.Add("Ben10");
+		ExtraModuleNames.Add("Ben10XR");
 	}
 }

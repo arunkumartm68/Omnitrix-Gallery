@@ -1,7 +1,6 @@
 // Alien Museum - hides the Quest's frame-synthesis extensions from Unreal's OpenXR plugin.
 
-#include "MR/MuseumOpenXRLayer.h"
-#include "Ben10.h"
+#include "MuseumOpenXRLayer.h"
 
 namespace
 {
@@ -41,7 +40,7 @@ namespace
 		All.RemoveAll([](const XrExtensionProperties& Property) { return IsHidden(Property.extensionName); });
 		if (All.Num() != Before && CapacityInput == 0)
 		{
-			UE_LOG(LogAlienMuseum, Log, TEXT("OpenXR: frame-synthesis extensions hidden from the engine (not used; avoids motion-vector swapchains)"));
+			UE_LOG(LogMuseumXR, Log, TEXT("OpenXR: frame-synthesis extensions hidden from the engine (not used; avoids motion-vector swapchains)"));
 		}
 
 		*CountOutput = static_cast<uint32_t>(All.Num());
@@ -82,5 +81,6 @@ bool FMuseumOpenXRLayer::InsertOpenXRAPILayer(PFN_xrGetInstanceProcAddr& InOutGe
 	}
 	NextGetInstanceProcAddr = InOutGetProcAddr;
 	InOutGetProcAddr = &GetInstanceProcAddrFiltered;
+	UE_LOG(LogMuseumXR, Log, TEXT("OpenXR: frame-synthesis filter layer inserted"));
 	return true;
 }
