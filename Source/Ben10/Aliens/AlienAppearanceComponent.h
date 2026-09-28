@@ -113,6 +113,11 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Alien")
 	bool bCastShadows = false;
 
+	/** Use the data asset's rigged (skinned, animated) model when it has one. Off for the collection's
+	 *  card previews: the static model looks the same there and costs far less. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Alien")
+	bool bUseRiggedModel = true;
+
 private:
 	/** A data part that moves on its own (swinging limb, flapping wing, flickering flame...). */
 	struct FAnimatedPart

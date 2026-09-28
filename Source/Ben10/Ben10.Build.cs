@@ -35,6 +35,9 @@ public class Ben10 : ModuleRules
 		PrivateDependencyModuleNames.AddRange(new string[]
 		{
 			"AndroidPermission",
+			"OpenXRHMD",        // MR/MuseumOpenXRLayer: IOpenXRExtensionPlugin
+			"AugmentedReality", // included by IOpenXRExtensionPlugin.h
 		});
+		AddEngineThirdPartyPrivateStaticDependencies(Target, "OpenXR");
 	}
 }

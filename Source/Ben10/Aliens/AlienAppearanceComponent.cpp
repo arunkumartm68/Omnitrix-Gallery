@@ -274,7 +274,7 @@ void UAlienAppearanceComponent::BuildAppearance(const UAlienDataAsset* Data)
 	if (bIsModel)
 	{
 		BuildModelBody(Data, Model);
-		if (!Data->RiggedMesh.IsNull())
+		if (bUseRiggedModel && !Data->RiggedMesh.IsNull())
 		{
 			if (USkeletalMesh* Rigged = Data->RiggedMesh.LoadSynchronous())
 			{

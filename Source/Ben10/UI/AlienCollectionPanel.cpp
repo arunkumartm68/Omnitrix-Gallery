@@ -109,6 +109,7 @@ AAlienCollectionPanel::AAlienCollectionPanel()
 
 		Card.Preview = CreateDefaultSubobject<UAlienAppearanceComponent>(*FString::Printf(TEXT("Card%dPreview"), i));
 		Card.Preview->SetupAttachment(Card.PreviewPivot);
+		Card.Preview->bUseRiggedModel = false; // still pictures: the static model is enough
 
 		Card.Name = CreateDefaultSubobject<UTextRenderComponent>(*FString::Printf(TEXT("Card%dName"), i));
 		Card.Name->SetupAttachment(Root);
