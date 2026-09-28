@@ -229,7 +229,15 @@ void AMuseumDirector::PreloadAlienAssets()
 		}
 		if (!Alien->RiggedMesh.IsNull())
 		{
-			Paths.AddUnique(Alien->RiggedMesh.ToSoftObjectPath()); // Wildmutt, Ghostfreak
+			Paths.AddUnique(Alien->RiggedMesh.ToSoftObjectPath()); // Wildmutt, Ghostfreak, Benwolf
+		}
+		for (int32 Clip = 0; Clip <= static_cast<int32>(EAlienClip::Attack); ++Clip)
+		{
+			const TSoftObjectPtr<UAnimSequence>& Sequence = Alien->Clips.Get(static_cast<EAlienClip>(Clip));
+			if (!Sequence.IsNull())
+			{
+				Paths.AddUnique(Sequence.ToSoftObjectPath()); // Benwolf's own animations
+			}
 		}
 	}
 	if (Paths.Num() == 0)

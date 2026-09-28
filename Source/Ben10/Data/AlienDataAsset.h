@@ -17,6 +17,7 @@
 class AAlienCharacter;
 class UStaticMesh;
 class USkeletalMesh;
+class UAnimSequence;
 class UChamberHabitatAsset;
 
 /** Signature move an alien performs now and then, and to show off to a visitor (UAlienActionComponent). */
@@ -36,7 +37,22 @@ enum class EAlienAction : uint8
 	Vines UMETA(ToolTip = "Vines lash out to the glass and pull back (Wildvine)"),
 	Melt UMETA(ToolTip = "Melts into the floor and re-forms somewhere else (Upgrade)"),
 	Scurry UMETA(ToolTip = "Quick tiny zig-zag scurry with hops (Grey Matter)"),
-	Fly UMETA(ToolTip = "Takes off and circles around the case (Stinkfly)")
+	Fly UMETA(ToolTip = "Takes off and circles around the case (Stinkfly)"),
+	Howl UMETA(ToolTip = "Winds up, opens its jaw wide and blasts sonic rings at the visitor (Benwolf; plays the model's Special clips when it has them)")
+};
+
+/** One of an animated model's own animations (UAlienDataAsset::Clips). */
+UENUM(BlueprintType)
+enum class EAlienClip : uint8
+{
+	Idle,
+	Move,
+	Jump,
+	SpecialStart,
+	SpecialLoop,
+	Special,
+	Hit,
+	Attack
 };
 
 /** Silhouette of the built-in placeholder alien. */
@@ -287,6 +303,66 @@ struct BEN10_API FAlienRig
 	bool bSniffs = false;
 };
 
+/**
+ * An animated model's own hand-made animations (blender_convert_models.py `animated`: Benwolf), played on
+ * its rigged model in place of the rest pose. The Rig's head look and sniffing still work on top.
+ * Idle loops while it stands, Move while it walks (faster or slower with the ground speed), Jump gives
+ * its mid-air pose (leaping, held in a hand); the others play when a move or a reaction asks for them.
+ */
+USTRUCT(BlueprintType)
+struct BEN10_API FAlienClips
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Clips")
+	TSoftObjectPtr<UAnimSequence> Idle;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Clips")
+	TSoftObjectPtr<UAnimSequence> Move;
+
+	/** Ground speed (cm/s at the data asset's Height) of Move played at its own pace and in full, its paws keeping pace with the ground. Slower walks take shorter strides. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Clips", meta = (Units = "cm/s", ClampMin = 1))
+	float MoveSpeed = 60.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Clips")
+	TSoftObjectPtr<UAnimSequence> Jump;
+
+	/** The signature move's wind-up (plays once). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Clips")
+	TSoftObjectPtr<UAnimSequence> SpecialStart;
+
+	/** The part of the signature move that repeats while it lasts. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Clips")
+	TSoftObjectPtr<UAnimSequence> SpecialLoop;
+
+	/** The whole signature move in one go. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Clips")
+	TSoftObjectPtr<UAnimSequence> Special;
+
+	/** A flinch (startled, hurt). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Clips")
+	TSoftObjectPtr<UAnimSequence> Hit;
+
+	/** A strike (swipe, punch). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Clips")
+	TSoftObjectPtr<UAnimSequence> Attack;
+
+	const TSoftObjectPtr<UAnimSequence>& Get(EAlienClip Clip) const
+	{
+		switch (Clip)
+		{
+		case EAlienClip::Move: return Move;
+		case EAlienClip::Jump: return Jump;
+		case EAlienClip::SpecialStart: return SpecialStart;
+		case EAlienClip::SpecialLoop: return SpecialLoop;
+		case EAlienClip::Special: return Special;
+		case EAlienClip::Hit: return Hit;
+		case EAlienClip::Attack: return Attack;
+		default: return Idle;
+		}
+	}
+};
+
 UCLASS(BlueprintType)
 class BEN10_API UAlienDataAsset : public UPrimaryDataAsset
 {
@@ -348,6 +424,10 @@ public:
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Model")
 	FAlienRig Rig;
+
+	/** The rigged model's own animations (Benwolf). When Idle is set they replace the procedural walk. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Model")
+	FAlienClips Clips;
 
 	bool HasModel() const { return !ModelMesh.IsNull(); }
 

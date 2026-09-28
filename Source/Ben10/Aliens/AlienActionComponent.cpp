@@ -188,6 +188,7 @@ void UAlienActionComponent::StopAction()
 		Body->ClearActionTransform();
 		Body->SetExtraLift(0.f);
 		Body->SetBodyVisible(true);
+		Body->StopClip(0.2f);
 	}
 	FlameBoost = 1.f;
 	if (bTempFlames)
@@ -282,6 +283,7 @@ void UAlienActionComponent::TickComponent(float DeltaTime, ELevelTick TickType, 
 		case EAlienAction::Melt: TickMelt(DeltaTime); break;
 		case EAlienAction::Scurry: TickScurry(DeltaTime); break;
 		case EAlienAction::Fly: TickFly(DeltaTime); break;
+		case EAlienAction::Howl: TickHowl(DeltaTime); break;
 		}
 		if (bPerforming && ActionTime > 15.f)
 		{
@@ -914,6 +916,102 @@ void UAlienActionComponent::TickScream(float Dt)
 	case 2:
 		Body->ClearActionTransform();
 		if (StepTime >= 0.3f)
+		{
+			StopAction();
+		}
+		break;
+	default:
+		StopAction();
+		break;
+	}
+}
+
+// ---------------------------------------------------------------------------------------------
+// Howl (Benwolf): winds up, opens his four-way jaw and blasts sonic rings at the visitor. A model with
+// its own clips plays its wind-up and holds its howl loop; any other alien rears back and howls.
+// ---------------------------------------------------------------------------------------------
+
+void UAlienActionComponent::TickHowl(float Dt)
+{
+	const bool bEnter = Entering();
+	const float H = WorldHeight();
+	const float S = Alien->GetScaleFactor();
+	const FLinearColor Sound = FMath::Lerp(ActionColor, FLinearColor::White, 0.3f);
+	switch (Step)
+	{
+	case 0: // face the visitor and wind up
+	{
+		if (bEnter)
+		{
+			FaceViewer();
+			Amount = Body->PlayClip(EAlienClip::SpecialStart, false, 0.2f);
+			if (Amount <= 0.f)
+			{
+				Amount = 0.5f;
+			}
+		}
+		if (!Body->HasClips())
+		{
+			const float A = FMath::Min(1.f, StepTime / Amount);
+			Body->SetActionTransform(FVector(1.f + 0.04f * A), FRotator(14.f * A, 0.f, 0.f));
+		}
+		if (StepTime >= Amount)
+		{
+			Counter = 0;
+			Timer = 0.12f; // the first ring right away
+			NextStep();
+		}
+		break;
+	}
+	case 1: // the howl: rings pour out of the open jaw
+	{
+		if (bEnter)
+		{
+			Body->PlayClip(EAlienClip::SpecialLoop, true, 0.1f);
+			Alien->SetExcited(true);
+		}
+		Timer += Dt;
+		if (!Body->HasClips())
+		{
+			const float Kick = Bell(FMath::Min(1.f, Timer / 0.18f));
+			Body->SetActionTransform(FVector(1.f + 0.03f * Kick), FRotator(-8.f * Kick, 0.f, 0.f));
+		}
+		if (Timer >= 0.18f && Counter < 8)
+		{
+			Timer = 0.f;
+			++Counter;
+			const FVector Dir = Forward();
+			FVector Head;
+			const FVector From = Body->GetHeadBoneLocation(Head)
+				? Head + Dir * (0.08f * H)
+				: Feet() + FVector(0.f, 0.f, H * 0.75f) + Dir * (CapsuleRadius() * 0.8f);
+			const float Speed = 110.f * S;
+			const float Distance = DistanceToGlass(From, Dir, 0.f) + 3.f * S;
+			const float Life = FMath::Clamp(Distance / Speed, 0.2f, 0.9f);
+			const int32 Index = SpawnFx(EFx::Ring, From, UpAlong(Dir), FVector(H * 0.1f), FVector(H * 0.8f), Sound, Life, 0.85f, 2.6f);
+			if (FxStates.IsValidIndex(Index))
+			{
+				FxStates[Index].Velocity = Dir * Speed;
+			}
+			if (Counter == 2)
+			{
+				Blast(From, Distance + H, 110.f * S, Dir, 0.3f);
+			}
+		}
+		if (Counter >= 8 && Timer >= 0.2f)
+		{
+			NextStep();
+		}
+		break;
+	}
+	case 2: // the jaw closes, back to prowling
+		if (bEnter)
+		{
+			Body->StopClip(0.35f);
+			Alien->SetExcited(false);
+		}
+		Body->ClearActionTransform();
+		if (StepTime >= 0.4f)
 		{
 			StopAction();
 		}

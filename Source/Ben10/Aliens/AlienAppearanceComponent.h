@@ -9,7 +9,9 @@
 // (UAlienActionComponent) bend the whole body through the action transform and extra lift.
 // A rigged model (the data asset's RiggedMesh, a skinned copy of the model) is animated bone by bone
 // from the data asset's Rig: legs walk with their paws planted (two-bone IK), the body bobs, sways and
-// breathes, the head looks around and sniffs, a tail waves.
+// breathes, the head looks around and sniffs, a tail waves. A model with its own animations (the data
+// asset's Clips: Benwolf) plays them instead of the rest pose - idle and walk blended by speed, a howl
+// or a flinch on top when asked - and the Rig's head look works on top of them.
 // A Blueprint subclass of AAlienCharacter with a skeletal mesh also works; this component then stays empty.
 
 #pragma once
@@ -95,6 +97,27 @@ public:
 	/** True when the body is a rigged model animated bone by bone. */
 	bool IsRigged() const { return RigComponent != nullptr; }
 
+	/** True when the rigged model plays its own clips (the data asset's Clips). */
+	bool HasClips() const { return RigClips.Num() > 0; }
+
+	bool HasClip(EAlienClip Clip) const { return RigClips.IsValidIndex(static_cast<int32>(Clip)) && RigClips[static_cast<int32>(Clip)] != nullptr; }
+
+	/**
+	 * Plays one of the model's clips over the idle / walk (a howl, a flinch), fading it in. A looping clip
+	 * plays until StopClip; a clip started while another plays at full strength follows on without a fade
+	 * (a wind-up, then its loop). Returns the clip's length in seconds (0 when the model has no such clip).
+	 */
+	float PlayClip(EAlienClip Clip, bool bLoop = false, float BlendTime = 0.2f, float Rate = 1.f);
+
+	/** Fades the playing clip out, back to the idle / walk. */
+	void StopClip(float BlendTime = 0.25f);
+
+	/** A clip is playing over the idle / walk (and not fading out). */
+	bool IsPlayingClip() const { return ActiveClip != nullptr && !bClipFadingOut; }
+
+	/** World position of the rig's head bone (false when the body has no rigged head). */
+	bool GetHeadBoneLocation(FVector& OutLocation) const;
+
 	/** Shows a second pose of the model (same scale, feet on the ground) until EndPose(). */
 	bool ShowPose(UStaticMesh* PoseMesh);
 	void EndPose();
@@ -144,6 +167,12 @@ private:
 	void BuildRig(const UAlienDataAsset* Data, USkeletalMesh* Mesh);
 	void UpdateRig(float DeltaSeconds, float TurnAlpha, float Excite);
 	void AddRigTurn(int32 Bone, const FQuat& Turn);
+
+	/** This frame's base pose from the clips (RigBase): idle / walk by ground speed (cm/s at scale 1), mid-air, the playing clip. */
+	void UpdateClipBase(float DeltaSeconds, float GroundSpeed);
+
+	/** A clip's pose at Time, bone space, in the mesh's bone order. */
+	void SampleClip(const UAnimSequence* Clip, float Time, TArray<FTransform>& Out) const;
 
 	UStaticMeshComponent* AddPart(const TCHAR* BaseName, UStaticMesh* Mesh, USceneComponent* Parent, const FTransform& Relative, UMaterialInterface* Material);
 	USceneComponent* AddPivot(const TCHAR* BaseName, USceneComponent* Parent, const FTransform& Relative);
@@ -256,6 +285,29 @@ private:
 	float RigCrouch = 0.f;             // a move's squash, done as bent legs
 	float RigNod = 0.f;                // a move's pitch while on the ground, done by the head
 	float ModelMeshHeight = 1.f;       // the model mesh's own height (before scaling)
+
+	/** The model's own clips, by EAlienClip (empty when it has none). */
+	UPROPERTY(Transient)
+	TArray<TObjectPtr<UAnimSequence>> RigClips;
+
+	/** The clip playing over the idle / walk. */
+	UPROPERTY(Transient)
+	TObjectPtr<UAnimSequence> ActiveClip;
+
+	TArray<int32> RigClipBones;        // mesh bone -> skeleton bone (the clips' tracks)
+	TArray<FTransform> RigBase;        // this frame's pose before the turns, bone space (clip models)
+	TArray<FTransform> RigClipScratch;
+	float ClipMoveSpeed = 60.f;        // cm/s at scale 1 where the walk clip plays at its own pace
+	float ClipIdleTime = 0.f;
+	float ClipMoveTime = 0.f;
+	float ClipMoveWeight = 0.f;
+	float ActiveClipTime = 0.f;
+	float ActiveClipRate = 1.f;
+	float ActiveClipWeight = 0.f;
+	float ClipFadeIn = 0.2f;
+	float ClipFadeOut = 0.25f;
+	bool bActiveClipLoops = false;
+	bool bClipFadingOut = false;
 
 	float ModelHeight = 32.f;
 	float ModelRadius = 10.f;

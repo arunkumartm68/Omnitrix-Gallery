@@ -52,7 +52,7 @@ run) → Alien Collection panel appears in front of the player.
 | Interaction | `Source/Ben10/Interaction/` – `MuseumPawn`, `MuseumHandInteractor` |
 | UI | `Source/Ben10/UI/AlienCollectionPanel` |
 | Content | `Content/AlienMuseum/` – `Maps/L_AlienMuseum`, `Blueprints/BP_*`, `Data/DA_*`, `Data/Classic/DA_Classic_*`, `Data/Models/DA_Model_*`, `Data/Habitats/HAB_*`, `Models/<Id>/` (imported meshes, materials, textures), `Materials/M_*` |
-| Tools | `Scripts/create_classic_aliens.py` – shape-built classic aliens; `Scripts/blender_inspect_models.py`, `Scripts/blender_convert_models.py`, `Scripts/blender_models_common.py` – downloaded models → Unreal-ready `.glb`; `Scripts/blender_pose_models.py` – re-poses rig-less models (Four Arms' flex, relaxed Four Arms and Wildvine); `Scripts/import_downloaded_models.py` – `.glb` → meshes + `DA_Model_*` + collection; `Scripts/create_habitats_and_moves.py` – habitats, signature moves, pose / ball meshes; `Scripts/create_museum_materials.py` – glass, habitat and effect materials; `Scripts/create_input_assets.py` – the player's input actions and mapping context (`/Game/AlienMuseum/Input`) |
+| Tools | `Scripts/create_classic_aliens.py` – shape-built classic aliens; `Scripts/blender_inspect_models.py`, `Scripts/blender_convert_models.py`, `Scripts/blender_models_common.py` – downloaded models → Unreal-ready `.glb`; `Scripts/blender_pose_models.py` – re-poses rig-less models (Four Arms' flex, relaxed Four Arms and Wildvine); `Scripts/import_downloaded_models.py` – `.glb` → meshes + `DA_Model_*` + collection; `Scripts/blender_convert_omnitrix.py` + `Scripts/import_omnitrix.py` – the classic Omnitrix watch (band / core / face, `Models/Omnitrix/`); `Scripts/create_habitats_and_moves.py` – habitats, signature moves, pose / ball meshes; `Scripts/create_museum_materials.py` – glass, habitat and effect materials; `Scripts/create_input_assets.py` – the player's input actions and mapping context (`/Game/AlienMuseum/Input`) |
 | Source art | `SourceArt/` (not in git): `Downloaded/` (unzipped downloads), `Converted/` (`.glb`, previews, `manifest.json`, `poses.json`) |
 
 ## Build
@@ -194,11 +194,12 @@ When an alien moves in, its case gets the alien's home world (`UAlienDataAsset::
 * **Ambient effect** – embers, bubbles, mist, sparkles, spores / dust or tech pulses.
 
 Props are placed at random but the same way every time for a case, never on top of the alien, and are
-rebuilt to fit when the case is resized. The 15 worlds: Khoros (Four Arms), Kinet race track (XLR8),
+rebuilt to fit when the case is resized. The 16 worlds: Khoros (Four Arms), Kinet race track (XLR8),
 Petropia (Diamondhead), Galvan B (Upgrade), Anur Phaetos graveyard (Ghostfreak), Piscciss ocean floor
 (Ripjaws), Vulpin (Wildmutt), Galvan Prime lab (Grey Matter), Arburia (Cannonbolt), Flors Verdance
 (Wildvine), Peptor XI (Upchuck), clone playground (Ditto), Sonorosia (Echo Echo), Pyros lava field
-(Heatblast), Lepidopterra swamp (Stinkfly).
+(Heatblast), Lepidopterra swamp (Stinkfly), Luna Lobo moonscape (Benwolf: jagged moon rocks, dead
+trees, bones, a moon-glow stone and mist).
 
 Physics rules that keep it stable: loose props *overlap* the alien (its movement component's repulsion
 force shoves them away) instead of blocking it, so a prop can never wedge the alien into the glass; the
@@ -226,6 +227,7 @@ you walk up to its glass. Moves follow the cartoon:
 | Upgrade | **Melt** – melts into a liquid-metal puddle, slides away leaving glowing circuit lines, re-forms |
 | Grey Matter | **Scurry** – tiny quick zig-zag dashes with hops |
 | Stinkfly | **Fly** – takes off, circles the case banking into the turns, lands. His wings are separate meshes that buzz while he hovers and beat in big fast strokes when he flies, moves or is held |
+| Benwolf | **Howl** – turns to you, winds up, his muzzle splits open into four and sonic rings pour out at the glass, pushing the props away (his model's own howl animations); also **Pounce** |
 
 Effects are pooled glowing shapes and rings (`M_FXGlow`, `M_FXRing`, max 40 per alien) that stay inside
 the glass. Models also lean into turns and when speeding up, turn slightly towards what they look at,
@@ -273,6 +275,13 @@ Sources for the moves: [Cannonbolt (Ben 10 Wiki)](https://ben10.fandom.com/wiki/
   in model heights. Wildmutt walks on all fours this way and Ghostfreak's tail waves; the settings live
   in `RIGS` in `Scripts/import_downloaded_models.py`. Console `Museum.RigTestSpeed 14` makes rigged
   aliens step on the spot as if walking at 14 cm/s (for checking the gait; 0 = off).
+* **Animated models** – `Clips` (the model's own hand-made animations, imported with its `RiggedMesh`:
+  Benwolf) replace the procedural walk: `Idle` loops while it stands, `Move` blends in while it walks
+  (`MoveSpeed` = the ground speed at which it plays in full; slower walks keep a natural cadence and take
+  shorter strides instead of playing in slow motion), `Jump` gives the mid-air pose (leaping, held in a
+  hand), and moves play `SpecialStart` → `SpecialLoop` (Howl), `Special`, `Hit` or `Attack` on top. The
+  `Rig`'s head look and sniffing still work on top of the clips. Clip names come from `CLIPS` in
+  `Scripts/import_downloaded_models.py`.
 * **Moves** – on any alien data asset: `Habitat`, `SignatureActions`, `ActionChance`, `ActionColor`,
   `bHeadFlames`, `bSpeedTrail`, `PoseMesh` (a second pose of the model shown during Flex) and `BallMesh`
   (the rolled-up form for Roll). `Scripts/create_habitats_and_moves.py` sets them all.
@@ -295,8 +304,9 @@ Sources for the moves: [Cannonbolt (Ben 10 Wiki)](https://ben10.fandom.com/wiki/
 
 ## Downloaded models (how the Ben 10 aliens got in)
 
-The 20 downloads (Sketchfab zips: FBX, OBJ, glTF, `.blend`, one `.rar`, plus a Wii game rip of
-Cannonbolt with his ball form) go through these scripts, in this order:
+The 21 alien downloads (Sketchfab zips: FBX, OBJ, glTF, `.blend`, one `.rar`, a Wii game rip of
+Cannonbolt with his ball form, and Benwolf's game model with its animations) go through these scripts,
+in this order:
 
 1. **Blender 5.2** – `Scripts/blender_convert_models.py` (settings per download in its `MODELS` table):
    imports the file, re-links textures by name (Sketchfab renames them, e.g. `.psd` → `.tga.png`), turns
@@ -311,7 +321,12 @@ Cannonbolt with his ball form) go through these scripts, in this order:
    keep their skeleton: the stance set up with `pose` and `ik` (two-bone IK - Wildmutt's front paws are
    planted on the ground under his shoulders) becomes the rig's rest pose, meshes that only followed a bone
    get skinned to it, unused tip bones are dropped, and `<Id>_Rig.glb` (skinned) is written next to the
-   static `<Id>.glb`.
+   static `<Id>.glb`. Animated models (`animated`: Benwolf, a game model with 15 hand-made takes) keep
+   their rest pose and the takes listed in `clips` (renamed to the game's clip names and exported with
+   `<Id>_Rig.glb`); `drop` removes a duplicate body, `bind` skins loose eyes and teeth to the bones that
+   move the skin around them (his four-way split jaw), `reduce` thins needlessly dense parts, a mesh
+   scale the game export left under the rig is undone (else every joint sits outside the body), and the
+   static `<Id>.glb` shows the `still` frame.
    ```
    & "C:\Program Files\Blender Foundation\Blender 5.2\blender.exe" -b --factory-startup --python Scripts\blender_convert_models.py -- SourceArt\Downloaded SourceArt\Converted [Id ...]
    ```
@@ -320,8 +335,10 @@ Cannonbolt with his ball form) go through these scripts, in this order:
    moving parts (`PART_MOTION` sets how they swing) and a rigged model's skeletal mesh (`<Id>_Rig/`, using
    the static model's materials, which are flagged *Used with Skeletal Mesh* - without it they render as
    the default grey material), creates the `DA_Model_*` assets (`RIGS` fills in their `Rig`) and
-   `DA_AlienCollection_Models`, and makes it the museum's collection. Models in `RETIRED` (taken out of
-   the museum: Four Arms 2, Cannonbolt 2 and 3, Upgrade 2) have their assets deleted.
+   `DA_AlienCollection_Models`, and makes it the museum's collection. An animated model's clips are
+   imported with its skeletal mesh (`Benwolf_RigIdle`, …) and set on its `Clips` from `CLIPS`. Models in
+   `RETIRED` (taken out of the museum: Four Arms 2, Cannonbolt 2 and 3, Upgrade 2) have their assets
+   deleted.
    ```
    & "C:\Program Files\Epic Games\UE_5.7\Engine\Binaries\Win64\UnrealEditor-Cmd.exe" C:\Games\Ben10\Ben10.uproject -run=pythonscript -script="C:/Games/Ben10/Scripts/import_downloaded_models.py" -unattended -nosplash -nullrhi
    ```
@@ -349,14 +366,28 @@ for materials that are just flat colours, `parts` for a mirrored pair of moving 
 it, add its id to `ORDER` in the import script (and to `EXTRA` if it is a new alien), run the import, add
 the alien to `MOVES` in `create_habitats_and_moves.py` and run that too.
 
+**The Omnitrix** (the classic watch from the `classic-omnitrix` download, for the player's wrist):
+`Scripts/blender_convert_omnitrix.py` splits it into three parts in one frame - the band with its four
+tubes, the core (faceplate ring and green lights, which pops up and turns as the dial) and the face disc
+(its own material slot and UVs across the disc, for the game's hourglass / silhouette face) - with the
+origin in the middle of the wrist hole, textures shrunk to 1024 px, and writes `Omnitrix_*.glb` plus
+`Omnitrix.json` (where the parts sit). `Scripts/import_omnitrix.py` imports them into
+`/Game/AlienMuseum/Models/Omnitrix/Band|Core|Face/` (the core shares the band's material). As modelled
+the band is only 4.5 × 4.9 cm, so the game scales it to the wrist.
+```
+& "C:\Program Files\Blender Foundation\Blender 5.2\blender.exe" -b --factory-startup --python Scripts\blender_convert_omnitrix.py -- SourceArt\Downloaded SourceArt\Converted
+& "C:\Program Files\Epic Games\UE_5.7\Engine\Binaries\Win64\UnrealEditor-Cmd.exe" C:\Games\Ben10\Ben10.uproject -run=pythonscript -script="C:/Games/Ben10/Scripts/import_omnitrix.py" -unattended -nosplash -nullrhi
+```
+
 ## Quest performance choices
 
 Forward shading, multiview, 4× MSAA, dynamic foveation (level High), no Lumen / VSM / ray tracing /
 distance fields / Substrate, ASTC-only textures, no dynamic shadows (fake contact shadows), unlit
 emissive "lighting" inside chambers, pillars instanced, alien AI thinks at 5 Hz, alien animation only
-when visible, max 8 chambers. Imported models: static meshes, except the rigged Wildmutt and Ghostfreak
-(skinned meshes with 53 / 44 bones posed in C++ on the game thread, no animation blueprint; the collection's
-cards show their static twins), ≤ 60 000 triangles
+when visible, max 8 chambers. Imported models: static meshes, except the rigged Wildmutt, Ghostfreak and
+Benwolf (skinned meshes with 53 / 44 / 86 bones posed in C++ on the game thread, no animation blueprint;
+Benwolf's clips are sampled straight from their compressed animation data, at most four per frame; the
+collection's cards show their static twins), ≤ 60 000 triangles
 each (8 cases ≈ 480 000 at most), power-of-two textures ≤ 2048, no Nanite, no collision, no shadow casting;
 one movable key light without shadows. Habitats: fixed props instanced (one draw call per kind), about
 3–10 loose physics props per case (asleep when still), ambient effects as one instanced mesh, animated
@@ -376,7 +407,9 @@ only while the case is seen. Moves: pooled effects (≤ 40 per alien), 3 after-i
   hand tracking and pinch. Everything else was tested in Play-In-Editor.
 * Most models are rigid static meshes: moves bend, squash, lean, hide or swap the whole body (Cannonbolt
   swaps to his ball); their limbs don't move. Stinkfly's wings flap, and Wildmutt and Ghostfreak are
-  rigged (legs, spine, head, jaw, tail). Four Arms (1) flexes with the pump and stomp only.
+  rigged (legs, spine, head, jaw, tail). Four Arms (1) flexes with the pump and stomp only. Benwolf moves
+  with his model's own animations; it has a run but no walk, so his slow prowl in the case is part of
+  the run blended over his hunched idle.
 * Four Arms (2), Cannonbolt (2), Cannonbolt (3) and Upgrade (2) were taken out of the museum (`RETIRED`).
   A saved case that held one of them comes back empty.
 * Heatblast was taken out of the museum (no model was downloaded for him). A saved case that held him

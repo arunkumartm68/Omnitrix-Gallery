@@ -16,6 +16,9 @@ side, with the joint they swing around, so the game can flap them.
 Rigged models (`rigged`: Wildmutt, Ghostfreak) keep their skeleton: the pose / stance set up here
 becomes the rig's rest pose, and besides the static <Id>.glb (same shape and frame) the skinned
 <Id>_Rig.glb is written, which the game animates bone by bone (walk cycle, tail...).
+Animated models (`animated`: Benwolf) come with hand-made animations: their rest pose stays as it
+is, the chosen clips are exported with the skinned <Id>_Rig.glb, and the static <Id>.glb shows the
+first clip's first frame (the pose the museum's cards and after-images use).
 """
 import math
 import os
@@ -46,6 +49,10 @@ MAX_SPAN = 56.0         # cm: widest pose that still fits the default chamber wi
 #      (both in height units from the model's centre / floor), aim = direction the end bone points,
 #      aim_bones = other bones of the limb (a thumb) -> the direction they point.
 # rigged = also export the skinned model (<Id>_Rig.glb) with the pose above as its rest pose.
+# animated = the model's own animations: clips = game clip name -> the file's take; still = (clip,
+#            frame) for the static model; drop = objects left out; bind = unskinned object -> bones
+#            its vertices follow (each vertex the nearest one); reduce = object -> share of its
+#            triangles kept (small parts that are needlessly dense).
 MODELS = {
     "ben-10-cannonbolt": dict(id="Cannonbolt_1", alien="Cannonbolt", height=50),
     "cannonbolt": dict(id="Cannonbolt_2", alien="Cannonbolt", height=50,
@@ -98,6 +105,22 @@ MODELS = {
                              "Mouth": (0.15, 0.02, 0.02), "omni black": (0.02, 0.02, 0.02),
                              "omni black.1": (0.02, 0.02, 0.02), "omni black.2": (0.02, 0.02, 0.02),
                              "Mat.2": (0.2, 1.0, 0.2)}),
+    # Game model ("Lobisben") with its own skeleton and hand-made animations, kept as they are: the game
+    # plays his clips (hunched idle, run on all fours, jump, the sonic howl that opens his four-way jaw).
+    # His body is in the file twice (whole, and cut to sit under his clothes): the whole one goes.
+    # Eyes and teeth were never skinned: they follow the head and the four jaw quarters.
+    # A 7 ft werewolf: bigger than the default case allows for his tail and long arms (max_span), so his
+    # case grows to fit him when he moves in.
+    "ben10-benwolf": dict(id="Benwolf", alien="Benwolf", height=56, max_span=70.0, animated=True,
+                          file="inner/source/model/11_Default_BenWolf.fbx",
+                          drop=["Corpo_Inteiro_"],
+                          bind={"Olho": ["Cabeça"], "Dentecim": ["FucinhoD", "FucinhoE"],
+                                "Dentebaixo": ["BocaD", "BocaE"]},
+                          reduce={"Garras_do_pé": 0.3, "Dentecim": 0.5, "Dentebaixo": 0.5},
+                          clips={"Idle": "Idle_Lobisben", "Run": "Run_Lobisben", "Jump": "Jump_Lobisben",
+                                 "HowlStart": "SpecialStart", "HowlLoop": "SpecialLoop", "Howl": "Special_Lobisben",
+                                 "Hit": "TakeDamage_Lobisben", "Attack": "Heavy_01_Lobisben"},
+                          still=("Idle", 1)),
 }
 
 
@@ -590,6 +613,194 @@ def finish_rigged(cfg, out_dir):
     return static, rig_glb, triangles, len(arm.data.bones)
 
 
+# ---------------------------------------------------------------------------------------------
+# Animated models (their own clips)
+# ---------------------------------------------------------------------------------------------
+
+def action_fcurves(action):
+    """Every F-curve of an action (Blender 4.4+ keeps them per layer / strip / slot)."""
+    if hasattr(action, "layers"):
+        for layer in action.layers:
+            for strip in layer.strips:
+                for slot in action.slots:
+                    bag = strip.channelbag(slot)
+                    if bag is not None:
+                        yield from bag.fcurves
+    else:
+        yield from action.fcurves
+
+
+def show_clip(arm, action, frame):
+    """Poses the rig as the clip is at that frame."""
+    if arm.animation_data is None:
+        arm.animation_data_create()
+    arm.animation_data.action = action
+    if hasattr(arm.animation_data, "action_slot") and arm.animation_data.action_slot is None and len(action.slots):
+        arm.animation_data.action_slot = action.slots[0]
+    arm.data.pose_position = "POSE"
+    bpy.context.scene.frame_set(frame)
+    bpy.context.view_layer.update()
+
+
+def keep_clips(arm, clips):
+    """Keeps the rig's takes named in `clips`, renamed to the clip names, and deletes every other action
+    (unused takes, the IK helpers' animation). Returns clip name -> action."""
+    kept = {}
+    for clip, take in clips.items():
+        action = next((a for a in bpy.data.actions if a.name.startswith(f"{arm.name}|{take}|")), None)
+        if action is None:
+            raise RuntimeError(f"take {take} not found in {[a.name for a in bpy.data.actions]}")
+        kept[clip] = action
+    for action in list(bpy.data.actions):
+        if action not in kept.values():
+            bpy.data.actions.remove(action)
+    for clip, action in kept.items():
+        action.name = clip
+        action.use_fake_user = True
+        start, end = action.frame_range
+        print(f"  clip {clip}: frames {start:.0f}-{end:.0f}")
+    return kept
+
+
+def bind_rigid_parts(arm, bind):
+    """Unskinned meshes (eyes, teeth) follow the skin around them: each vertex takes the listed bone that
+    moves the nearest skinned vertex (that vertex's strongest bone or one of its parents), so teeth open
+    with each quarter of a split jaw exactly like the lips around them. (Bone positions are no guide:
+    a game rig's bones need not sit inside the mesh.)"""
+    from mathutils.kdtree import KDTree
+    skinned = [o for o in common.mesh_objects() if o.name not in bind and len(o.vertex_groups) > 0]
+    for obj_name, bone_names in bind.items():
+        obj = bpy.data.objects.get(obj_name)
+        if obj is None or not all(arm.data.bones.get(n) for n in bone_names):
+            raise RuntimeError(f"bind: {obj_name} or one of {bone_names} not found")
+        owner = {}  # bone -> the listed bone it belongs to (itself or its nearest listed parent)
+        for name in bone_names:
+            owner[name] = name
+            for child in arm.data.bones[name].children_recursive:
+                if child.name not in bone_names:
+                    owner.setdefault(child.name, name)
+        points = []
+        for source in skinned:
+            groups = {g.index: g.name for g in source.vertex_groups}
+            for vertex in source.data.vertices:
+                if vertex.groups:
+                    strongest = groups.get(max(vertex.groups, key=lambda g: g.weight).group)
+                    if strongest in owner:
+                        points.append((source.matrix_world @ vertex.co, owner[strongest]))
+        if not points:
+            raise RuntimeError(f"bind: no skin around {obj_name} moves with {bone_names}")
+        tree = KDTree(len(points))
+        for i, (co, _bone) in enumerate(points):
+            tree.insert(co, i)
+        tree.balance()
+        members = {name: [] for name in bone_names}
+        for vertex in obj.data.vertices:
+            _co, index, _dist = tree.find(obj.matrix_world @ vertex.co)
+            members[points[index][1]].append(vertex.index)
+        obj.vertex_groups.clear()
+        for name, indices in members.items():
+            if indices:
+                obj.vertex_groups.new(name=name).add(indices, 1.0, "REPLACE")
+        if not any(m.type == "ARMATURE" for m in obj.modifiers):
+            obj.modifiers.new("Armature", "ARMATURE").object = arm
+        print("  bound", obj_name, "to", {n: len(m) for n, m in members.items()})
+
+
+def scale_clip_moves(actions, factor):
+    """The rig was scaled (applied): bone moves in the clips (the hips' bob, a jump) scale with it."""
+    for action in actions:
+        for fcurve in action_fcurves(action):
+            if fcurve.data_path.endswith("location"):
+                for key in fcurve.keyframe_points:
+                    key.co[1] *= factor
+                    key.handle_left[1] *= factor
+                    key.handle_right[1] *= factor
+                fcurve.update()
+
+
+def match_rig_scale(arm):
+    """A game export can leave its meshes with a scale of their own under the rig (Benwolf's: 0.75), which
+    games ignore when they skin them. Blender keeps it, so the body is drawn smaller than the skeleton that
+    bends it: every joint sits outside the body (the neck above the head) and every pose comes out warped.
+    The meshes are scaled back to the rig's size around the rig's origin."""
+    origin = arm.matrix_world.translation.copy()
+    rig_scale = arm.matrix_world.to_scale().x
+    for obj in common.mesh_objects():
+        factor = rig_scale / obj.matrix_world.to_scale().x
+        if abs(factor - 1.0) > 1e-3:
+            obj.matrix_world = Matrix.Translation(origin) @ Matrix.Scale(factor, 4) @ Matrix.Translation(-origin) @ obj.matrix_world
+            print(f"  {obj.name}: scaled x{factor:.3f} to match the rig")
+    bpy.context.view_layer.update()
+
+
+def finish_animated(cfg, out_dir):
+    """Animated path of convert(): keeps the rest pose and the chosen clips, writes <Id>_Rig.glb (skinned,
+    with the clips) and <Id>.glb (the still pose as a plain mesh). Returns (static, rig glb, tris, bones)."""
+    arm = armature()
+    match_rig_scale(arm)
+    for name in cfg.get("drop", []):
+        obj = bpy.data.objects.get(name)
+        if obj is not None:
+            bpy.data.objects.remove(obj, do_unlink=True)
+            print("  dropped", name)
+    for obj in [o for o in bpy.context.scene.objects if o.type not in ("MESH", "ARMATURE")]:
+        bpy.data.objects.remove(obj, do_unlink=True)  # the rig's IK targets and poles
+    clips = keep_clips(arm, cfg["clips"])
+    arm.data.pose_position = "REST"  # geometry work below happens in the rest (bind) pose
+    bind_rigid_parts(arm, cfg.get("bind", {}))
+    for name, share in cfg.get("reduce", {}).items():
+        obj = bpy.data.objects.get(name)
+        if obj is not None:
+            decimate(obj, int(common.triangle_count([obj]) * share))
+    for obj in common.mesh_objects():
+        bake_shape_keys(obj)
+    body = join(common.mesh_objects())
+    body.name = body.data.name = cfg["id"] + "_Skin"
+    triangles = decimate(body, cfg.get("max_triangles", MAX_TRIANGLES))
+    remove_unused_bones(arm, body)
+
+    # Size and place it by the still pose (what stands in the case), then apply that to rig and skin.
+    still_clip, still_frame = cfg["still"]
+    show_clip(arm, clips[still_clip], still_frame)
+    lo, hi = common.world_bounds([body])
+    size = hi - lo
+    span = max(size.x, size.y)
+    max_span = cfg.get("max_span", MAX_SPAN)
+    height_cm = min(cfg["height"], max_span * size.z / span) if span > 0 else cfg["height"]
+    scale = (height_cm / 100.0) / size.z
+    rig_scale = arm.matrix_world.to_scale().x * scale  # what the bones grow by once applied
+    move = Matrix.Scale(scale, 4) @ Matrix.Translation(Vector((-(lo.x + hi.x) * 0.5, -(lo.y + hi.y) * 0.5, -lo.z)))
+    for obj in (body, arm):
+        world = obj.matrix_world.copy()
+        obj.parent = None
+        obj.matrix_world = move @ world
+    for obj in bpy.context.scene.objects:
+        obj.select_set(obj in (arm, body))
+    bpy.context.view_layer.objects.active = arm
+    bpy.ops.object.transform_apply(location=True, rotation=True, scale=True)
+    scale_clip_moves(clips.values(), rig_scale)
+    arm.name = cfg["id"] + "_Rig"
+    body.parent = arm  # both transforms are identity now; glTF wants the skin under its armature
+    for mod in body.modifiers:
+        if mod.type == "ARMATURE":
+            mod.object = arm
+    print(f"  scaled by {rig_scale:.5f}: {height_cm:.1f} cm in the still pose")
+
+    shrink_textures(os.path.join(out_dir, "textures", cfg["id"]))
+    rig_glb = os.path.join(out_dir, cfg["id"] + "_Rig.glb")
+    export_glb(rig_glb, [arm, body], skinned=True, animations=True)
+    # The still pose as a plain mesh: the museum's ModelMesh (size, after-images, card previews).
+    show_clip(arm, clips[still_clip], still_frame)
+    depsgraph = bpy.context.evaluated_depsgraph_get()
+    mesh = bpy.data.meshes.new_from_object(body.evaluated_get(depsgraph), preserve_all_data_layers=True, depsgraph=depsgraph)
+    mesh.transform(body.matrix_world)
+    static = bpy.data.objects.new(cfg["id"], mesh)
+    mesh.name = cfg["id"]
+    bpy.context.scene.collection.objects.link(static)
+    body.hide_render = True
+    return static, rig_glb, triangles, len(arm.data.bones), sorted(clips)
+
+
 def bake_to_static_meshes():
     """Replaces every mesh with its evaluated result (pose, shape keys, modifiers) in world space."""
     depsgraph = bpy.context.evaluated_depsgraph_get()
@@ -706,21 +917,26 @@ def part_joint(obj):
 # Export
 # ---------------------------------------------------------------------------------------------
 
-def export_glb(path, objects=None, skinned=False):
+def export_glb(path, objects=None, skinned=False, animations=False):
     """Writes the scene (or only the given objects) as a binary glTF; `skinned` keeps the armature
-    and the vertex weights (no animation)."""
+    and the vertex weights, `animations` also writes every action of the armature as a clip."""
     if objects is not None:
         for obj in bpy.context.scene.objects:
             obj.select_set(obj in objects)
     props = bpy.ops.export_scene.gltf.get_rna_type().properties.keys()
     wanted = dict(
         filepath=path, export_format="GLB", use_selection=objects is not None, export_apply=not skinned,
-        export_animations=False, export_skins=skinned, export_morph=False, export_cameras=False,
+        export_animations=animations, export_skins=skinned, export_morph=False, export_cameras=False,
         export_def_bones=False, export_rest_position_armature=True, export_leaf_bone=False,
         export_lights=False, export_yup=True, export_texcoords=True, export_normals=True,
         export_tangents=False, export_materials="EXPORT", export_image_format="AUTO",
         export_draco_mesh_compression_enable=False, export_extras=False,
     )
+    if animations:
+        # One glTF animation per action, sampled every frame, each starting at 0.
+        wanted.update(export_animation_mode="ACTIONS", export_force_sampling=True, export_frame_step=1,
+                      export_anim_slide_to_zero=True, export_reset_pose_bones=True,
+                      export_optimize_animation_size=True, export_anim_single_armature=True)
     kwargs = {k: v for k, v in wanted.items() if k in props}
     skipped = sorted(set(wanted) - set(kwargs))
     if skipped:
@@ -738,6 +954,18 @@ def convert(folder_name, cfg, downloads, out_dir):
     fix_materials(cfg, folder)
 
     apply_rotation(cfg.get("rotate"))
+    if cfg.get("animated"):
+        static, rig_glb, triangles, bones, clips = finish_animated(cfg, out_dir)
+        glb = os.path.join(out_dir, cfg["id"] + ".glb")
+        export_glb(glb, [static])
+        common.render_views(os.path.join(out_dir, cfg["id"] + ".png"), [static])
+        lo, hi = common.world_bounds([static])
+        return {
+            "id": cfg["id"], "alien": cfg["alien"], "height_cm": round((hi.z - lo.z) * 100.0, 1),
+            "glb": glb, "rig_glb": rig_glb, "bones": bones, "clips": clips, "source_folder": folder_name,
+            "source_file": os.path.basename(path), "importer": importer, "triangles": triangles,
+            "materials": len(static.data.materials), "textures": 0,
+        }
     reset_rigs()
     rest_lo, rest_hi = common.world_bounds(common.mesh_objects())
     if cfg.get("rigged"):
@@ -804,7 +1032,8 @@ def convert(folder_name, cfg, downloads, out_dir):
 
 def main():
     args = common.args_after_double_dash()
-    downloads, out_dir = args[0], args[1]
+    # Absolute: Blender saves images (previews, resized textures) relative to the drive root otherwise.
+    downloads, out_dir = os.path.abspath(args[0]), os.path.abspath(args[1])
     only = set(args[2:])
     os.makedirs(out_dir, exist_ok=True)
     manifest_path = os.path.join(out_dir, "manifest.json")

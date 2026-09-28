@@ -97,6 +97,7 @@ private:
 	void TickMelt(float Dt);
 	void TickScurry(float Dt);
 	void TickFly(float Dt);
+	void TickHowl(float Dt);
 
 	/** True on the first tick of a step (each move's steps set themselves up then). */
 	bool Entering();

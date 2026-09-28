@@ -4,6 +4,8 @@
 #include "Aliens/AlienCharacter.h"
 #include "Core/MuseumAssets.h"
 #include "Ben10.h"
+#include "Animation/AnimSequence.h"
+#include "Animation/Skeleton.h"
 #include "Components/PoseableMeshComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Engine/SkeletalMesh.h"
@@ -162,6 +164,13 @@ void UAlienAppearanceComponent::ClearAppearance()
 	RigFloating.Reset();
 	RigRestLocal.Reset();
 	RigNeck = RigHead = RigJaw = INDEX_NONE;
+	RigClips.Reset();
+	RigClipBones.Reset();
+	RigBase.Reset();
+	RigClipScratch.Reset();
+	ActiveClip = nullptr;
+	ActiveClipWeight = 0.f;
+	bClipFadingOut = false;
 	RestMesh = nullptr;
 	bIsModel = false;
 	bBodyVisible = true;
@@ -492,8 +501,171 @@ void UAlienAppearanceComponent::BuildRig(const UAlienDataAsset* Data, USkeletalM
 	}
 	GaitCycle = FMath::FRand();
 	SniffTimer = FMath::FRandRange(2.f, 5.f);
-	UE_LOG(LogAlienMuseum, Log, TEXT("%s: rigged model with %d bones, %d legs, %d spine, %d tail, %d floating bones"),
-		*Data->GetName(), Num, RigLegs.Num(), RigSpine.Num(), RigTail.Num(), RigFloating.Num());
+
+	// The model's own animations (Benwolf): the pose comes from them instead of the rest pose.
+	if (!Data->Clips.Idle.IsNull())
+	{
+		const int32 ClipCount = static_cast<int32>(EAlienClip::Attack) + 1;
+		RigClips.SetNum(ClipCount);
+		for (int32 Clip = 0; Clip < ClipCount; ++Clip)
+		{
+			RigClips[Clip] = Data->Clips.Get(static_cast<EAlienClip>(Clip)).LoadSynchronous();
+			if (RigClips[Clip] && RigClips[Clip]->GetSkeleton() != Mesh->GetSkeleton())
+			{
+				UE_LOG(LogAlienMuseum, Warning, TEXT("%s: clip %s belongs to another skeleton, left out"), *Data->GetName(), *RigClips[Clip]->GetName());
+				RigClips[Clip] = nullptr;
+			}
+		}
+		USkeleton* ClipSkeleton = Mesh->GetSkeleton();
+		if (!RigClips[static_cast<int32>(EAlienClip::Idle)] || !ClipSkeleton)
+		{
+			UE_LOG(LogAlienMuseum, Warning, TEXT("%s: idle clip %s could not be loaded, using the rest pose"), *Data->GetName(), *Data->Clips.Idle.ToString());
+			RigClips.Reset();
+		}
+		else
+		{
+			RigClipBones.SetNum(Num);
+			for (int32 i = 0; i < Num; ++i)
+			{
+				RigClipBones[i] = ClipSkeleton->GetSkeletonBoneIndexFromMeshBoneIndex(Mesh, i);
+			}
+			RigBase = RigRestLocal;
+			RigClipScratch = RigRestLocal;
+			ClipMoveSpeed = FMath::Max(1.f, Data->Clips.MoveSpeed);
+			// Two of the same alien never breathe in step.
+			ClipIdleTime = FMath::FRand() * RigClips[static_cast<int32>(EAlienClip::Idle)]->GetPlayLength();
+			ClipMoveTime = 0.f;
+			ClipMoveWeight = 0.f;
+		}
+	}
+	UE_LOG(LogAlienMuseum, Log, TEXT("%s: rigged model with %d bones, %d legs, %d spine, %d tail, %d floating bones%s"),
+		*Data->GetName(), Num, RigLegs.Num(), RigSpine.Num(), RigTail.Num(), RigFloating.Num(),
+		HasClips() ? TEXT(", own animations") : TEXT(""));
+}
+
+float UAlienAppearanceComponent::PlayClip(EAlienClip Clip, bool bLoop, float BlendTime, float Rate)
+{
+	if (!HasClip(Clip))
+	{
+		return 0.f;
+	}
+	UAnimSequence* Sequence = RigClips[static_cast<int32>(Clip)];
+	const float Length = FMath::Max(0.01f, Sequence->GetPlayLength());
+	ActiveClip = Sequence;
+	ActiveClipTime = 0.f;
+	ActiveClipRate = FMath::Max(0.05f, Rate);
+	bActiveClipLoops = bLoop;
+	bClipFadingOut = false;
+	// A clip that follows one at full strength (a wind-up, then its loop) takes over without a fade;
+	// otherwise it fades in from wherever the last one had got to.
+	ClipFadeIn = ActiveClipWeight >= 0.99f ? 0.01f : FMath::Max(0.01f, BlendTime);
+	ClipFadeOut = FMath::Min(0.25f, Length * 0.3f);
+	return Length / ActiveClipRate;
+}
+
+void UAlienAppearanceComponent::StopClip(float BlendTime)
+{
+	if (ActiveClip)
+	{
+		bClipFadingOut = true;
+		ClipFadeOut = FMath::Max(0.01f, BlendTime);
+	}
+}
+
+bool UAlienAppearanceComponent::GetHeadBoneLocation(FVector& OutLocation) const
+{
+	if (!RigComponent || !RigSpace.IsValidIndex(RigHead))
+	{
+		return false;
+	}
+	OutLocation = RigComponent->GetComponentTransform().TransformPosition(RigSpace[RigHead].GetLocation());
+	return true;
+}
+
+void UAlienAppearanceComponent::SampleClip(const UAnimSequence* Clip, float Time, TArray<FTransform>& Out) const
+{
+	const FAnimExtractContext Context(static_cast<double>(Time));
+	for (int32 i = 0; i < Out.Num(); ++i)
+	{
+		const int32 SkeletonBone = RigClipBones.IsValidIndex(i) ? RigClipBones[i] : INDEX_NONE;
+		if (SkeletonBone == INDEX_NONE)
+		{
+			Out[i] = RigRestLocal[i];
+			continue;
+		}
+		Clip->GetBoneTransform(Out[i], FSkeletonPoseBoneIndex(SkeletonBone), Context, false);
+	}
+}
+
+void UAlienAppearanceComponent::UpdateClipBase(float DeltaSeconds, float GroundSpeed)
+{
+	auto Blend = [](TArray<FTransform>& Into, const TArray<FTransform>& Other, float Weight)
+	{
+		for (int32 i = 0; i < Into.Num(); ++i)
+		{
+			Into[i].BlendWith(Other[i], Weight);
+		}
+	};
+
+	// Standing: the idle as it was made.
+	const UAnimSequence* Idle = RigClips[static_cast<int32>(EAlienClip::Idle)];
+	ClipIdleTime = FMath::Fmod(ClipIdleTime + DeltaSeconds, FMath::Max(0.01f, Idle->GetPlayLength()));
+	SampleClip(Idle, ClipIdleTime, RigBase);
+
+	// Walking: the move cycle keeps pace with the ground. Slow walks don't play it in slow motion (a
+	// sprint at a quarter speed looks like the moon): it keeps a natural cadence and takes shorter strides
+	// (less of it over the idle), and only a fast run plays it in full.
+	const UAnimSequence* Move = RigClips[static_cast<int32>(EAlienClip::Move)];
+	const float Effort = GroundSpeed / ClipMoveSpeed;
+	const float Rate = FMath::Clamp(0.55f + 0.5f * Effort, 0.55f, 1.6f);
+	ClipMoveWeight = FMath::FInterpTo(ClipMoveWeight, GroundSpeed > 1.5f ? FMath::Clamp(Effort / Rate, 0.f, 1.f) : 0.f, DeltaSeconds, 6.f);
+	if (Move && ClipMoveWeight > 0.01f)
+	{
+		ClipMoveTime = FMath::Fmod(ClipMoveTime + DeltaSeconds * Rate, FMath::Max(0.01f, Move->GetPlayLength()));
+		SampleClip(Move, ClipMoveTime, RigClipScratch);
+		Blend(RigBase, RigClipScratch, ClipMoveWeight);
+	}
+
+	// Off the ground (a leap, held in a hand): the jump's tucked mid-air pose.
+	const UAnimSequence* Jump = RigClips[static_cast<int32>(EAlienClip::Jump)];
+	if (Jump && Airborne > 0.01f)
+	{
+		SampleClip(Jump, Jump->GetPlayLength() * 0.45f, RigClipScratch);
+		Blend(RigBase, RigClipScratch, Airborne);
+	}
+
+	// A howl or a flinch on top, fading in and out. A clip that does not loop fades out as it ends.
+	if (ActiveClip)
+	{
+		const float Length = FMath::Max(0.01f, ActiveClip->GetPlayLength());
+		ActiveClipTime += DeltaSeconds * ActiveClipRate;
+		if (bActiveClipLoops)
+		{
+			ActiveClipTime = FMath::Fmod(ActiveClipTime, Length);
+		}
+		else if (!bClipFadingOut && ActiveClipTime >= Length - ClipFadeOut * ActiveClipRate)
+		{
+			bClipFadingOut = true;
+		}
+		ActiveClipWeight = FMath::Clamp(ActiveClipWeight + DeltaSeconds / (bClipFadingOut ? -ClipFadeOut : ClipFadeIn), 0.f, 1.f);
+		if (bClipFadingOut && ActiveClipWeight <= 0.f)
+		{
+			ActiveClip = nullptr;
+		}
+		else
+		{
+			SampleClip(ActiveClip, FMath::Min(ActiveClipTime, Length), RigClipScratch);
+			Blend(RigBase, RigClipScratch, ActiveClipWeight);
+		}
+	}
+
+	// A clip may carry the whole body along (root motion): the root stays over the capsule.
+	if (RigBase.Num() > 0)
+	{
+		const FVector Rest = RigRestLocal[0].GetTranslation();
+		const FVector Now = RigBase[0].GetTranslation();
+		RigBase[0].SetTranslation(FVector(Rest.X, Rest.Y, Now.Z));
+	}
 }
 
 void UAlienAppearanceComponent::AddRigTurn(int32 Bone, const FQuat& Turn)
@@ -524,9 +696,17 @@ void UAlienAppearanceComponent::UpdateRig(float DeltaSeconds, float TurnAlpha, f
 	const UCharacterMovementComponent* Move = Alien ? Alien->GetCharacterMovement() : nullptr;
 	const float UnitsPerCm = 1.f / FMath::Max(0.01f, static_cast<float>(Rig->GetComponentScale().Z));
 	const float TestSpeed = CVarRigTestSpeed.GetValueOnGameThread();
-	const float Speed = (TestSpeed > 0.f ? TestSpeed : (Alien ? static_cast<float>(Alien->GetVelocity().Size2D()) : 0.f)) * UnitsPerCm;
+	const float WorldSpeed = TestSpeed > 0.f ? TestSpeed : (Alien ? static_cast<float>(Alien->GetVelocity().Size2D()) : 0.f);
+	const float Speed = WorldSpeed * UnitsPerCm;
 	const bool bInAir = Alien && (Alien->IsOutOfCase() || (Move && Move->IsFalling()));
 	Airborne = FMath::FInterpTo(Airborne, bInAir ? 1.f : 0.f, DeltaSeconds, bInAir ? 8.f : 12.f);
+
+	// The pose the turns below start from: the rest pose, or this frame of the model's own clips.
+	if (HasClips())
+	{
+		UpdateClipBase(DeltaSeconds, WorldSpeed / (Alien ? FMath::Max(0.01f, Alien->GetScaleFactor()) : 1.f));
+	}
+	const TArray<FTransform>& BasePose = HasClips() ? RigBase : RigRestLocal;
 	GaitMoving = FMath::FInterpTo(GaitMoving, FMath::Clamp(FMath::Max(Speed / (0.12f * H), TurnAlpha), 0.f, 1.f), DeltaSeconds, 6.f);
 	const float Run = FMath::Clamp(Speed / (1.2f * H), 0.f, 1.f);
 	const float Frequency = 0.9f + 1.6f * FMath::Min(Speed / H, 1.5f) + 0.7f * TurnAlpha; // steps per second
@@ -619,7 +799,7 @@ void UAlienAppearanceComponent::UpdateRig(float DeltaSeconds, float TurnAlpha, f
 	for (int32 i = 0; i < Num; ++i)
 	{
 		const int32 Parent = RigParents[i];
-		FTransform Local = RigRestLocal[i];
+		FTransform Local = BasePose[i];
 		const FQuat ParentRotation = Parent == INDEX_NONE ? FQuat::Identity : RigSpace[Parent].GetRotation();
 		if (!RigTurns[i].Equals(FQuat::Identity, 1.e-6f))
 		{

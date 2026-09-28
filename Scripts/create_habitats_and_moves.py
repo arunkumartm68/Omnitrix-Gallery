@@ -18,7 +18,7 @@ Moves follow what the aliens do in Ben 10 (Cartoon Network): Cannonbolt rolls in
 at super speed, Heatblast is on fire, Four Arms shows off his strength, Diamondhead grows crystals,
 Ghostfreak phases, Echo Echo screams and splits, Ditto clones, Upchuck eats and spits, Wildmutt and
 Ripjaws pounce, Wildvine lashes vines and seed bombs, Upgrade melts into machines, Grey Matter
-scurries, Stinkfly flies. Private fan project - not for publishing.
+scurries, Stinkfly flies, Benwolf howls with his four-way jaw. Private fan project - not for publishing.
 """
 import os
 import sys
@@ -150,6 +150,14 @@ HABITATS = {
         prop(S.SPHERE, (0.25, 0.25, 0.20), 2, (7, 9), (1.3, 1, 0.6), P.CORNERS, blocks=True),              # rocks
         prop(S.CYLINDER, (0.30, 0.20, 0.10), 2, (2.5, 3), (1, 1, 4), tilt=70, physics=True),               # driftwood
     ]),
+    # Benwolf's home: the Loboans' moon, pale blue under the light of Anur Transyl.
+    "LunaLobo": ("Luna Lobo moonscape", G.ROCK, (0.16, 0.17, 0.22), (0.55, 0.65, 1.0), 1.0, A.MIST, (0.7, 0.78, 1.0), 10, [
+        prop(S.CONE, (0.20, 0.21, 0.27), 4, (6, 9), (1, 1, 1.8), P.EDGES, tilt=14, blocks=True),           # jagged moon rocks
+        prop(S.CYLINDER, (0.10, 0.08, 0.08), 2, (2, 3), (1, 1, 10), P.CORNERS, tilt=14),                   # dead trees
+        prop(S.SPHERE, (0.75, 0.82, 1.0), 1, (7, 8), place=P.BACK, look=L.GLOW),                           # moon-glow stone
+        prop(S.CYLINDER, (0.90, 0.87, 0.78), 3, (1.5, 2), (1, 1, 5), tilt=60, physics=True),               # bones
+        prop(S.SPHERE, (0.25, 0.26, 0.32), 3, (3, 5), (1.2, 1, 0.8), physics=True),                        # moon pebbles
+    ]),
 }
 
 # Alien -> (habitat, moves (first = show-off), effect colour, chance per idle, extras)
@@ -169,6 +177,8 @@ MOVES = {
     "EchoEcho": ("Sonorosia", [M.SCREAM, M.CLONE], (0.6, 0.85, 1.0), 0.45, {}),
     "Heatblast": ("Pyros", [M.FLARE], (1.0, 0.45, 0.08), 0.4, {"head_flames": True}),
     "Stinkfly": ("Lepidopterra", [M.FLY], (0.6, 1.0, 0.3), 0.45, {}),
+    # The sonic howl is his show-off move; he prowls a little quicker than the static models walk.
+    "Benwolf": ("LunaLobo", [M.HOWL, M.POUNCE], (0.5, 1.0, 0.75), 0.4, {"walk_speed": 45.0, "energy": 0.6}),
 }
 
 

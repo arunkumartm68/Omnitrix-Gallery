@@ -9,7 +9,8 @@ For every model this script:
   1. imports the .glb into /Game/AlienMuseum/Models/<Id>/ (one static mesh + its materials/textures;
      no Nanite, no collision - Quest cannot use Nanite and the alien uses its capsule), its moving
      parts (Stinkfly's wings) into /Game/AlienMuseum/Models/<Id>_<Part><Side>/ and a rigged model's
-     skinned copy (<Id>_Rig.glb: Wildmutt, Ghostfreak) into /Game/AlienMuseum/Models/<Id>_Rig/,
+     skinned copy (<Id>_Rig.glb: Wildmutt, Ghostfreak, Benwolf - his with its animation clips) into
+     /Game/AlienMuseum/Models/<Id>_Rig/,
   2. creates / updates /Game/AlienMuseum/Data/Models/DA_Model_<Id> (identity, height, behaviour,
      moving parts with their joints and how they swing),
   3. puts them all in DA_AlienCollection_Models and makes that the museum's collection, and deletes
@@ -37,7 +38,7 @@ COLLECTION_NAME = "DA_AlienCollection_Models"
 # Collection order (the first one fills the starter chamber on a fresh install).
 ORDER = ["FourArms_1", "XLR8_1", "XLR8_2", "Diamondhead_1", "Diamondhead_2",
          "Upgrade_1", "Ghostfreak", "Ripjaws", "Wildmutt", "GreyMatter",
-         "Cannonbolt_1", "Wildvine", "Upchuck", "Ditto", "EchoEcho", "Stinkfly"]
+         "Cannonbolt_1", "Wildvine", "Upchuck", "Ditto", "EchoEcho", "Stinkfly", "Benwolf"]
 
 # Taken out of the museum by the owner (the downloads stay in SourceArt; add an id back to ORDER to
 # bring it back). Their imported assets are deleted, so they are not cooked into the app.
@@ -62,6 +63,10 @@ EXTRA = {
                   desc="Splits into identical copies of itself - whatever one copy feels, they all feel."),
     "Echo Echo": dict(species="Sonorosian", planet="Sonorosia", chamber=(0.4, 1.0, 0.5),
                       desc="A living amplifier that clones itself and blasts ear-splitting sonic screams."),
+    # The classic series' werewolf (later called Blitzwolfer): moonlight-blue case.
+    "Benwolf": dict(species="Loboan", planet="Luna Lobo, moon of Anur Transyl", chamber=(0.45, 0.6, 1.0),
+                    desc="His muzzle splits into four to unleash a sonic howl. Sees in the dark and hunts by scent, "
+                         "but loud noises hurt his ears."),
 }
 
 HOVERS = {"Ghostfreak", "Stinkfly"}
@@ -93,6 +98,16 @@ RIGS = {
         tail=[f"bip_tail_{i}" for i in range(8)],
         floating=["bip_upperArm_L", "bip_lowerArm_L", "bip_upperArm_R", "bip_lowerArm_R"],
         tail_amount=16.0, tail_speed=0.7),
+    # Benwolf moves with his own clips (CLIPS): the rig only turns his head to look and sniff the air.
+    "Benwolf": dict(neck="Pescoço", head="Cabeça", sniffs=True),
+}
+
+# Animated models' own clips (glTF animation names from blender_convert_models.py `clips`) -> AlienClips.
+# move_speed: cm/s (at the model's height) at which the move clip's paws keep pace with the ground,
+# measured from the clip (planted paws sweep ~2.5 m/s at 56 cm).
+CLIPS = {
+    "Benwolf": dict(idle="Idle", move="Run", jump="Jump", special_start="HowlStart", special_loop="HowlLoop",
+                    special="Howl", hit="Hit", attack="Attack", move_speed=250.0),
 }
 
 AT = unreal.AssetToolsHelpers.get_asset_tools()
@@ -187,7 +202,8 @@ def share_materials(mesh, source_mesh):
 
 def import_rigged(entry, static_mesh):
     """Imports a rigged model's skinned copy (<Id>_Rig.glb) as a skeletal mesh with its skeleton into
-    Models/<Id>_Rig, using the static model's materials. Returns the SkeletalMesh."""
+    Models/<Id>_Rig, using the static model's materials, plus its animation clips when it has them
+    (animated models). Returns (SkeletalMesh, {clip name: AnimSequence})."""
     dest = f"{MODEL_ROOT}/{entry['id']}_Rig"
     unreal.SystemLibrary.execute_console_command(None, "Interchange.FeatureFlags.Import.SyncToBrowser 0")
     if EAL.does_directory_exist(dest):
@@ -199,7 +215,7 @@ def import_rigged(entry, static_mesh):
     mesh.set_editor_property("import_skeletal_meshes", True)
     mesh.set_editor_property("import_morph_targets", False)
     mesh.set_editor_property("create_physics_asset", False)
-    pipeline.get_editor_property("animation_pipeline").set_editor_property("import_animations", False)
+    pipeline.get_editor_property("animation_pipeline").set_editor_property("import_animations", bool(entry.get("clips")))
     pipeline.get_editor_property("material_pipeline").set_editor_property(
         "search_location", unreal.InterchangeMaterialSearchLocation.DO_NOT_SEARCH)
     skeletal_type = getattr(unreal.InterchangeForceMeshType, "IFMT_SKELETAL_MESH", None)
@@ -217,12 +233,24 @@ def import_rigged(entry, static_mesh):
     AT.import_asset_tasks([task])
 
     skeletal = None
+    anims = {}
     for path in EAL.list_assets(dest, recursive=True, include_folder=False):
         asset = unreal.load_asset(path)
         if isinstance(asset, unreal.SkeletalMesh):
             skeletal = asset
+        elif isinstance(asset, unreal.AnimSequence):
+            anims[asset.get_name()] = asset
     if skeletal is None:
         raise RuntimeError(f"no skeletal mesh imported for {entry['id']}")
+    # Clip assets are named after the glTF animation, prefixed with the mesh name (Benwolf_RigIdle).
+    clips = {}
+    prefix = skeletal.get_name()
+    for clip in entry.get("clips", []):
+        found = [a for n, a in anims.items() if n in (clip, prefix + clip, prefix + "_" + clip)]
+        if found:
+            clips[clip] = found[0]
+        else:
+            unreal.log_warning(f"clip {clip} of {entry['id']} not found among {sorted(anims)}")
     # Same model: the static mesh's materials (matched by slot name), the imported copies deleted.
     by_name = {}
     for slot in static_mesh.get_editor_property("static_materials"):
@@ -250,8 +278,22 @@ def import_rigged(entry, static_mesh):
     skeleton = skeletal.get_editor_property("skeleton")
     bounds = skeletal.get_bounds()
     print(f"RIG {entry['id']}: {skeletal.get_path_name()} bones={len(skeleton.get_editor_property('bone_tree')) if skeleton else '?'} "
-          f"bounds origin={bounds.origin} extent={bounds.box_extent} (static {static_mesh.get_bounding_box()})")
-    return skeletal
+          f"bounds origin={bounds.origin} extent={bounds.box_extent} (static {static_mesh.get_bounding_box()})"
+          + (f" clips={ {n: round(a.get_play_length(), 2) for n, a in clips.items()} }" if clips else ""))
+    return skeletal, clips
+
+
+def make_clips(model_id, anims):
+    """AlienClips for an animated model from CLIPS and its imported clips (empty clips otherwise)."""
+    spec = CLIPS.get(model_id, {})
+    clips = unreal.AlienClips()
+    for key in ("idle", "move", "jump", "special_start", "special_loop", "special", "hit", "attack"):
+        name = spec.get(key)
+        if name and name in anims:
+            clips.set_editor_property(key, anims[name])
+    if "move_speed" in spec:
+        clips.set_editor_property("move_speed", spec["move_speed"])
+    return clips
 
 
 def make_rig(model_id):
@@ -327,7 +369,7 @@ def identity_for(alien):
             unreal.LinearColor(*extra["chamber"], 1.0))
 
 
-def build_alien(entry, mesh, display_name, parts=(), rigged=None):
+def build_alien(entry, mesh, display_name, parts=(), rigged=None, anims=None):
     da = load_or_create(DATA_FOLDER, f"DA_Model_{entry['id']}", unreal.AlienDataAsset)
     species, planet, desc, chamber = identity_for(entry["alien"])
     da.set_editor_property("alien_id", unreal.Name(f"Model_{entry['id']}"))
@@ -339,6 +381,7 @@ def build_alien(entry, mesh, display_name, parts=(), rigged=None):
     da.set_editor_property("model_parts", list(parts))
     da.set_editor_property("rigged_mesh", rigged)
     da.set_editor_property("rig", make_rig(entry["id"]) if rigged else unreal.AlienRig())
+    da.set_editor_property("clips", make_clips(entry["id"], anims or {}))
     da.set_editor_property("model_rotation", unreal.Rotator(0.0, 0.0, 0.0))
     da.set_editor_property("model_credit", unreal.Text(f"Model: {entry['source_folder']} (Sketchfab download)"))
     da.set_editor_property("height", float(entry["height_cm"]))
@@ -392,8 +435,8 @@ def main(only=()):
         if EAL.does_directory_exist(rig_folder):
             EAL.delete_directory(rig_folder)
         mesh = import_model(entry)
-        rigged = import_rigged(entry, mesh) if entry.get("rig_glb") else None
-        da = build_alien(entry, mesh, display, import_parts(entry), rigged)
+        rigged, anims = import_rigged(entry, mesh) if entry.get("rig_glb") else (None, {})
+        da = build_alien(entry, mesh, display, import_parts(entry), rigged, anims)
         assets.append(da)
         folder = f"{MODEL_ROOT}/{model_id}"
         textures = [p for p in EAL.list_assets(folder, recursive=True, include_folder=False)
