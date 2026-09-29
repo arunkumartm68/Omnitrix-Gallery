@@ -30,6 +30,16 @@ void UMuseumHandInteractor::Setup(EControllerHand InHand, UMotionControllerCompo
 	Laser = InLaser;
 	Reticle = InReticle;
 
+	// Read the controllers after they have polled this frame's pose (they tick in the same group): otherwise the
+	// ray trails the controller by a frame.
+	for (UMotionControllerComponent* Controller : { InAim, InGrip })
+	{
+		if (Controller)
+		{
+			AddTickPrerequisiteComponent(Controller);
+		}
+	}
+
 	if (UMaterialInterface* Emissive = MuseumAssets::EmissiveMaterial())
 	{
 		LaserMID = UMaterialInstanceDynamic::Create(Emissive, this);
@@ -54,6 +64,16 @@ void UMuseumHandInteractor::SetControllerSelect(bool bPressed)
 void UMuseumHandInteractor::SetControllerGrab(bool bPressed)
 {
 	bControllerGrab = bPressed;
+}
+
+void UMuseumHandInteractor::SetControllerSelectAxis(float Value)
+{
+	bControllerSelect = bControllerSelect ? Value > ControllerReleaseThreshold : Value >= ControllerPressThreshold;
+}
+
+void UMuseumHandInteractor::SetControllerGrabAxis(float Value)
+{
+	bControllerGrab = bControllerGrab ? Value > ControllerReleaseThreshold : Value >= ControllerPressThreshold;
 }
 
 void UMuseumHandInteractor::SetDesktopRay(const FVector& Origin, const FVector& Direction)
@@ -111,7 +131,8 @@ bool UMuseumHandInteractor::UpdateFromHandTracking()
 	// Pointer ray from an estimated shoulder through the index knuckle: stable and natural,
 	// similar to the system hand ray.
 	FVector Shoulder = IndexKnuckle - FVector(40.f, 0.f, -20.f);
-	if (APlayerCameraManager* Camera = UGameplayStatics::GetPlayerCameraManager(this, 0))
+	const APlayerCameraManager* Camera = UGameplayStatics::GetPlayerCameraManager(this, 0);
+	if (Camera)
 	{
 		const FRotator FlatView(0.f, Camera->GetCameraRotation().Yaw, 0.f);
 		const float Side = Hand == EControllerHand::Left ? -1.f : 1.f;
@@ -124,12 +145,16 @@ bool UMuseumHandInteractor::UpdateFromHandTracking()
 		GrabRotation = State.HandKeyRotations[static_cast<int32>(EHandKeypoint::Palm)];
 	}
 
-	// Closed fist = grab: the middle, ring and little fingertips curl in to the palm.
+	// Closed fist = grab: every fingertip curls in to the palm, the index too - curling only the middle, ring and
+	// little fingers is how many people pinch, and that stays a pinch.
 	const float Curl = (FVector::Dist(Key(EHandKeypoint::MiddleTip), Palm) + FVector::Dist(Key(EHandKeypoint::RingTip), Palm)
 		+ FVector::Dist(Key(EHandKeypoint::LittleTip), Palm)) / 3.f;
-	bFist = bFist ? Curl < FistEndDistance : Curl < FistStartDistance;
+	const float IndexCurl = FVector::Dist(IndexTip, Palm);
+	bFist = bFist ? (Curl < FistEndDistance && IndexCurl < FistIndexEndDistance)
+		: (Curl < FistStartDistance && IndexCurl < FistIndexStartDistance);
 
 	// Pinch with hysteresis - not while making a fist (closing fingers brush thumb and index together).
+	const bool bWasPinching = bPinching;
 	const float PinchDistance = FVector::Dist(ThumbTip, IndexTip);
 	bPinching = !bFist && (bPinching ? PinchDistance < PinchEndDistance : PinchDistance < PinchStartDistance);
 
@@ -148,10 +173,27 @@ bool UMuseumHandInteractor::UpdateFromHandTracking()
 		WristPose = FTransform(FRotationMatrix::MakeFromXZ(Along, Back).ToQuat(), Wrist);
 		bHasWristPose = true;
 	}
+
+	// The palm turned to the face and held up in view: Quest's menu pose. A pinch that starts in it is the menu
+	// gesture - it selects nothing, whatever the ray happens to be on (in a room of cases it is nearly always on one).
+	bPalmFacingHead = false;
+	if (Camera && !Back.IsNearlyZero())
+	{
+		const FVector ToHead = (Camera->GetCameraLocation() - Palm).GetSafeNormal();
+		bPalmFacingHead = FVector::DotProduct(-Back.GetSafeNormal(), ToHead) > 0.55f
+			&& FVector::DotProduct(Camera->GetCameraRotation().Vector(), -ToHead) > 0.5f;
+	}
+	if (bPinching && !bWasPinching && bPalmFacingHead)
+	{
+		bMenuPinch = true;
+		OnMenuPinch.Broadcast(this);
+	}
+	bMenuPinch = bMenuPinch && bPinching;
+
 	// Taps come from the fingertip; a pinch or a fist is busy selecting or grabbing.
 	TapPoint = IndexTip;
 	bHasTapPoint = !bFist && !bPinching;
-	SetSelectState(bPinching);
+	SetSelectState(bPinching && !bMenuPinch);
 	SetGrabState(bFist);
 	return true;
 }
@@ -205,6 +247,8 @@ void UMuseumHandInteractor::TickComponent(float DeltaTime, ELevelTick TickType, 
 	{
 		bPinching = false;
 		bFist = false;
+		bPalmFacingHead = false;
+		bMenuPinch = false;
 	}
 	if (NewSource == EMuseumHandSource::None || NewSource == EMuseumHandSource::Desktop)
 	{
@@ -260,6 +304,29 @@ void UMuseumHandInteractor::UpdatePointer()
 	const FVector End = AimOrigin + AimDirection * MaxPointerDistance;
 	if (World->LineTraceSingleByChannel(Hit, AimOrigin, End, MuseumCollision::PointerChannel, Params))
 	{
+		// The collection floats in the room and shows through the glass: a case between the hand and it (a life-size
+		// one often is) must not swallow the ray. Look behind up to three cases; nothing there, the case keeps it.
+		FCollisionQueryParams Behind = Params;
+		FHitResult Next = Hit;
+		for (int32 Tries = 0; Tries < 3; ++Tries)
+		{
+			const IMuseumInteractable* Blocker = Cast<IMuseumInteractable>(Next.GetActor());
+			if (!Blocker || Blocker->IsPointedThroughCases())
+			{
+				break;
+			}
+			Behind.AddIgnoredActor(Next.GetActor());
+			if (!World->LineTraceSingleByChannel(Next, AimOrigin, End, MuseumCollision::PointerChannel, Behind))
+			{
+				break;
+			}
+			const IMuseumInteractable* Found = Cast<IMuseumInteractable>(Next.GetActor());
+			if (Found && Found->IsPointedThroughCases())
+			{
+				Hit = Next;
+				break;
+			}
+		}
 		PointerHit.bHit = true;
 		PointerHit.Location = Hit.ImpactPoint;
 		PointerHit.Normal = Hit.ImpactNormal;
@@ -284,6 +351,18 @@ void UMuseumHandInteractor::UpdateVisuals()
 	if (!bTracked)
 	{
 		return;
+	}
+
+	// On a controller the laser and its dot ride on the aim pose, so the render thread's late update keeps them on
+	// the real controller (seen through passthrough) however fast it moves. A tracked hand's ray is our own.
+	USceneComponent* Parent = Source == EMuseumHandSource::Controller && AimController
+		? static_cast<USceneComponent*>(AimController.Get()) : GetOwner()->GetRootComponent();
+	for (UStaticMeshComponent* Visual : { Laser.Get(), Reticle.Get() })
+	{
+		if (Parent && Visual->GetAttachParent() != Parent)
+		{
+			Visual->AttachToComponent(Parent, FAttachmentTransformRules::KeepWorldTransform);
+		}
 	}
 
 	const FVector End = bHasLaserOverride ? LaserOverrideEnd

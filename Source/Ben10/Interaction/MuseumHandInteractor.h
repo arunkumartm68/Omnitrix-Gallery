@@ -2,8 +2,9 @@
 //
 // Works with three input sources and picks the best one every frame:
 //   Hand       - Quest hand tracking (pinch = select, closed fist = grab; the grab point is the
-//                pinch point, or the palm while the fist is closed)
-//   Controller - Touch controllers (trigger = select, grip = grab)
+//                pinch point, or the palm while the fist is closed; a pinch with the palm turned
+//                to the face is Quest's menu gesture and selects nothing)
+//   Controller - Touch controllers (trigger = select, grip = grab, both with a press / release threshold)
 //   Desktop    - mouse ray from the camera when no headset is active (PIE testing)
 
 #pragma once
@@ -66,6 +67,15 @@ public:
 	void SetControllerSelect(bool bPressed);
 	void SetControllerGrab(bool bPressed);
 
+	/**
+	 * Trigger / grip as analog values (0..1): pressed from ControllerPressThreshold, let go again under
+	 * ControllerReleaseThreshold - a finger resting on the grip never grabs, and a trigger that doesn't spring all
+	 * the way back still lets go.
+	 */
+	void SetControllerSelectAxis(float Value);
+	void SetControllerGrabAxis(float Value);
+	bool IsControllerSelectHeld() const { return bControllerSelect; }
+
 	/** Desktop testing: aim ray supplied by the pawn (camera ray). */
 	void SetDesktopRay(const FVector& Origin, const FVector& Direction);
 
@@ -107,6 +117,9 @@ public:
 	bool IsPinching() const { return bPinching; }
 	FVector GetPinchPoint() const { return PinchPoint; }
 
+	/** Hand tracking: the palm is turned to the face and held in view - Quest's menu pose. */
+	bool IsPalmFacingHead() const { return bPalmFacingHead; }
+
 	/**
 	 * Busy (working the watch up close): its trigger / pinch and grip / fist select and grab nothing and its
 	 * laser is off. A button pressed while busy stays ignored until it is let go.
@@ -126,17 +139,24 @@ public:
 	/** Grip (controller), closed fist (hand tracking) or right mouse (desktop). */
 	FOnHandButton OnGrab;
 
+	DECLARE_MULTICAST_DELEGATE_OneParam(FOnHandGesture, UMuseumHandInteractor* /*Hand*/);
+	/**
+	 * Hand tracking: a pinch made with the palm turned to the face (Quest's menu gesture on the left hand). That
+	 * pinch selects nothing, whatever the ray is on.
+	 */
+	FOnHandGesture OnMenuPinch;
+
 	// ---- Settings ----
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Museum|Hand")
 	float MaxPointerDistance = 500.f;
 
-	/** Thumb-index distance (cm) that starts a pinch. */
+	/** Thumb-index tip distance (cm) that starts a pinch (the tip joints stay about 1.5-2 cm apart when the pads touch). */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Museum|Hand")
-	float PinchStartDistance = 1.8f;
+	float PinchStartDistance = 2.5f;
 
 	/** Thumb-index distance (cm) that ends a pinch (hysteresis against flicker). */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Museum|Hand")
-	float PinchEndDistance = 3.5f;
+	float PinchEndDistance = 4.0f;
 
 	/** Average palm-to-fingertip distance (middle, ring, little; cm) that closes a fist = grab. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Museum|Hand")
@@ -145,6 +165,24 @@ public:
 	/** ... and that opens it again (hysteresis). */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Museum|Hand")
 	float FistEndDistance = 7.5f;
+
+	/**
+	 * A fist also needs the index tip this close to the palm (cm): curling only the middle, ring and little fingers
+	 * is how many people pinch, and that must stay a pinch.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Museum|Hand")
+	float FistIndexStartDistance = 6.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Museum|Hand")
+	float FistIndexEndDistance = 7.5f;
+
+	/** Controller trigger / grip travel (0..1) that presses it... */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Museum|Hand")
+	float ControllerPressThreshold = 0.55f;
+
+	/** ... and under which it lets go again (hysteresis against flicker). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Museum|Hand")
+	float ControllerReleaseThreshold = 0.35f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Museum|Hand")
 	FLinearColor LaserColor = FLinearColor(0.3f, 0.8f, 1.0f);
@@ -189,6 +227,8 @@ private:
 	bool bControllerGrab = false;
 	bool bPinching = false;
 	bool bFist = false;
+	bool bPalmFacingHead = false;
+	bool bMenuPinch = false; // this pinch began in the menu pose: it selects nothing
 
 	FVector TapPoint = FVector::ZeroVector;
 	bool bHasTapPoint = false;

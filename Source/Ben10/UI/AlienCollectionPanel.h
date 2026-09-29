@@ -94,6 +94,7 @@ public:
 
 	virtual void OnPointerHover(UPrimitiveComponent* HitComponent, bool bHovered) override;
 	virtual bool OnPointerSelect(UPrimitiveComponent* HitComponent, AMuseumPawn* Pawn) override;
+	virtual bool IsPointedThroughCases() const override { return true; }
 	virtual void Tick(float DeltaSeconds) override;
 
 	/** Distance in front of the head when summoned (cm). */

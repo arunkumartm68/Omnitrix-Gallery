@@ -2,7 +2,8 @@
 //
 // Controls (Touch controllers / hand tracking / desktop PIE):
 //   Point + Trigger / Pinch / Left mouse   select UI, place chambers and aliens
-//   Trigger, Grip or fist on a chamber     grab and carry it (works up close or by ray)
+//   Trigger, Grip or fist on a chamber     grab and carry it (works up close or by ray; reaching out /
+//                                          pulling in pushes / pulls a far one along the ray)
 //   Grip / fist on an alien (up close or   take the alien out and hold it like a pet: turn your hand
 //   by ray), or hold trigger / pinch on it to turn it, thumbstick / Z C spins it, Q E zooms, two hands
 //                                          zoom; let go over its case = back in, elsewhere = it
@@ -12,7 +13,8 @@
 //   Both hands on one chamber              scale and rotate it
 //   Thumbstick while carrying / Z C Q E    rotate (X) and resize (Y)
 //   X / Y / B / Menu / Tab                 open or close the Alien Collection
-//   Left-hand pinch and hold (1 s)         open or close the Alien Collection (hand tracking)
+//   Left palm to your face + pinch         open or close the Alien Collection (hand tracking; Quest's
+//                                          menu gesture) - or a left pinch held 1 s pointing at nothing
 //   Desktop only: mouse look, WASD move
 
 #pragma once
@@ -151,6 +153,14 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Museum")
 	float RotateSpeed = 90.f;
 
+	/**
+	 * Carrying a chamber grabbed from afar: reaching out or pulling the hand in moves it along the ray by that much
+	 * times (its distance / the hand's reach), up to this - a case 3 m away comes 60 cm closer for 10 cm of hand.
+	 * A chamber held at the hand moves 1:1.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Museum")
+	float MaxCarryDepthGain = 8.f;
+
 	/** Relative size change per second when resizing with the thumbstick. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Museum")
 	float ScaleSpeed = 0.6f;
@@ -263,6 +273,9 @@ private:
 		float TargetScale = 1.f;
 		float StartTime = 0.f;
 		FVector StartHandLocation = FVector::ZeroVector;
+		float StartReach = 0.f;   // how far the hand was held out from the head (horizontally) when it grabbed
+		float DepthGain = 1.f;    // reaching out / pulling in moves the case this many times as far (far cases more)
+		float MinDistance = 0.f;  // the case's centre is never pulled closer to the head than this
 		bool bMoved = false;
 		bool bFromSelect = false;
 	};
@@ -302,16 +315,19 @@ private:
 	void ApplyInputMapping();
 	void ConfigureForDisplayMode();
 
-	// Enhanced Input callbacks
-	void OnSelectLeftStarted(const FInputActionValue& Value);
-	void OnSelectLeftCompleted(const FInputActionValue& Value);
-	void OnSelectRightStarted(const FInputActionValue& Value);
-	void OnSelectRightCompleted(const FInputActionValue& Value);
-	void OnGrabLeftStarted(const FInputActionValue& Value);
-	void OnGrabLeftCompleted(const FInputActionValue& Value);
-	void OnGrabRightStarted(const FInputActionValue& Value);
-	void OnGrabRightCompleted(const FInputActionValue& Value);
+	// Enhanced Input callbacks. Trigger and grip come in as analog values every frame (Triggered) and 0 when let go
+	// (Completed); the hand turns them into presses with a threshold.
+	void OnSelectLeft(const FInputActionValue& Value);
+	void OnSelectLeftReleased(const FInputActionValue& Value);
+	void OnSelectRight(const FInputActionValue& Value);
+	void OnSelectRightReleased(const FInputActionValue& Value);
+	void OnGrabLeft(const FInputActionValue& Value);
+	void OnGrabLeftReleased(const FInputActionValue& Value);
+	void OnGrabRight(const FInputActionValue& Value);
+	void OnGrabRightReleased(const FInputActionValue& Value);
+	void SetLeftSelectAxis(float Value);
 	void OnMenu(const FInputActionValue& Value);
+	void HandleMenuPinch(UMuseumHandInteractor* Hand);
 	void OnRemove(const FInputActionValue& Value);
 	void OnAdjust(const FInputActionValue& Value);
 	void OnAdjustCompleted(const FInputActionValue& Value);
@@ -349,7 +365,8 @@ private:
 	FVector GetResizePoint(const UMuseumHandInteractor* Hand, const FHandResize& Resize) const;
 	FHandResize& GetResize(const UMuseumHandInteractor* Hand);
 	void BeginTwoHandGrab(AAlienChamber* Chamber);
-	void ResetOneHandGrab(UMuseumHandInteractor* Hand, AAlienChamber* Chamber);
+	/** Starts (or restarts) carrying with one hand; GrabPoint is where it took hold - at the hand, or along its ray. */
+	void ResetOneHandGrab(UMuseumHandInteractor* Hand, AAlienChamber* Chamber, const FVector& GrabPoint);
 	void UpdateGrabs(float DeltaSeconds);
 	void UpdateHover();
 	void UpdatePlacement(float DeltaSeconds);
@@ -374,6 +391,8 @@ private:
 	FHandGrab& GetGrab(const UMuseumHandInteractor* Hand);
 	UMuseumHandInteractor* GetOtherHand(const UMuseumHandInteractor* Hand) const;
 	UMuseumHandInteractor* GetPointingHand() const;
+	/** Roughly where this hand's shoulder is (the arm swings around it). */
+	FVector GetShoulder(const UMuseumHandInteractor* Hand) const;
 	AAlienChamber* FindNearestChamber(const FVector& Location, float MaxDistance) const;
 	AMuseumDirector* GetDirector() const;
 
@@ -439,6 +458,12 @@ private:
 	TWeakObjectPtr<UPrimitiveComponent> HoveredComponent[2];
 
 	FVector2D AdjustInput = FVector2D::ZeroVector;
+
+	/** The hand that pressed select last: it points for placing a chamber (a left-hander's left, not always the right). */
+	TWeakObjectPtr<UMuseumHandInteractor> LastSelectHand;
+
+	/** The collection was opened / closed then (a menu button and a menu gesture at once toggle it only once). */
+	double LastMenuToggleTime = -10.0;
 	float MenuHoldTimer = 0.f;
 	bool bMenuHoldConsumed = false;
 	bool bDesktopMode = false;

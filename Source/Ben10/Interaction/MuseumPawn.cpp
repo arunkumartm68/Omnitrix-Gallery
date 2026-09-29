@@ -151,6 +151,8 @@ void AMuseumPawn::BeginPlay()
 	RightHand->OnSelect.AddUObject(this, &AMuseumPawn::HandleSelect);
 	LeftHand->OnGrab.AddUObject(this, &AMuseumPawn::HandleGrab);
 	RightHand->OnGrab.AddUObject(this, &AMuseumPawn::HandleGrab);
+	LeftHand->OnMenuPinch.AddUObject(this, &AMuseumPawn::HandleMenuPinch);
+	RightHand->OnMenuPinch.AddUObject(this, &AMuseumPawn::HandleMenuPinch);
 
 	// Read the hands after they have updated this frame.
 	AddTickPrerequisiteComponent(LeftHand);
@@ -340,14 +342,16 @@ void AMuseumPawn::SetupPlayerInputComponent(UInputComponent* PlayerInputComponen
 		return;
 	}
 
-	Input->BindAction(SelectLeftAction, ETriggerEvent::Started, this, &AMuseumPawn::OnSelectLeftStarted);
-	Input->BindAction(SelectLeftAction, ETriggerEvent::Completed, this, &AMuseumPawn::OnSelectLeftCompleted);
-	Input->BindAction(SelectRightAction, ETriggerEvent::Started, this, &AMuseumPawn::OnSelectRightStarted);
-	Input->BindAction(SelectRightAction, ETriggerEvent::Completed, this, &AMuseumPawn::OnSelectRightCompleted);
-	Input->BindAction(GrabLeftAction, ETriggerEvent::Started, this, &AMuseumPawn::OnGrabLeftStarted);
-	Input->BindAction(GrabLeftAction, ETriggerEvent::Completed, this, &AMuseumPawn::OnGrabLeftCompleted);
-	Input->BindAction(GrabRightAction, ETriggerEvent::Started, this, &AMuseumPawn::OnGrabRightStarted);
-	Input->BindAction(GrabRightAction, ETriggerEvent::Completed, this, &AMuseumPawn::OnGrabRightCompleted);
+	// Trigger and grip: their analog value every frame it is above zero, and a final Completed at zero. (With no
+	// trigger on the mapping, Started / Completed alone would fire at the lightest touch and wait for exactly 0.)
+	Input->BindAction(SelectLeftAction, ETriggerEvent::Triggered, this, &AMuseumPawn::OnSelectLeft);
+	Input->BindAction(SelectLeftAction, ETriggerEvent::Completed, this, &AMuseumPawn::OnSelectLeftReleased);
+	Input->BindAction(SelectRightAction, ETriggerEvent::Triggered, this, &AMuseumPawn::OnSelectRight);
+	Input->BindAction(SelectRightAction, ETriggerEvent::Completed, this, &AMuseumPawn::OnSelectRightReleased);
+	Input->BindAction(GrabLeftAction, ETriggerEvent::Triggered, this, &AMuseumPawn::OnGrabLeft);
+	Input->BindAction(GrabLeftAction, ETriggerEvent::Completed, this, &AMuseumPawn::OnGrabLeftReleased);
+	Input->BindAction(GrabRightAction, ETriggerEvent::Triggered, this, &AMuseumPawn::OnGrabRight);
+	Input->BindAction(GrabRightAction, ETriggerEvent::Completed, this, &AMuseumPawn::OnGrabRightReleased);
 	Input->BindAction(MenuAction, ETriggerEvent::Started, this, &AMuseumPawn::OnMenu);
 	Input->BindAction(RemoveAction, ETriggerEvent::Started, this, &AMuseumPawn::OnRemove);
 	Input->BindAction(AdjustAction, ETriggerEvent::Triggered, this, &AMuseumPawn::OnAdjust);
@@ -359,26 +363,25 @@ void AMuseumPawn::SetupPlayerInputComponent(UInputComponent* PlayerInputComponen
 	Input->BindAction(WatchDialAction, ETriggerEvent::Completed, this, &AMuseumPawn::OnWatchDialCompleted);
 }
 
-void AMuseumPawn::OnSelectLeftStarted(const FInputActionValue&)
+void AMuseumPawn::OnSelectLeft(const FInputActionValue& Value) { SetLeftSelectAxis(Value.Get<float>()); }
+void AMuseumPawn::OnSelectLeftReleased(const FInputActionValue&) { SetLeftSelectAxis(0.f); }
+
+void AMuseumPawn::SetLeftSelectAxis(float Value)
 {
+	// A press that went to the watch (a slam) stays with it until the trigger is let go.
+	if (bLeftSelectToWatch)
+	{
+		bLeftSelectToWatch = Value > LeftHand->ControllerReleaseThreshold;
+		return;
+	}
 	// The dial is open: the left trigger slams it (the watch hand's pointer clicks nothing meanwhile).
-	if (Watch && Watch->IsDialOpen())
+	if (Watch && Watch->IsDialOpen() && !LeftHand->IsControllerSelectHeld() && Value >= LeftHand->ControllerPressThreshold)
 	{
 		bLeftSelectToWatch = true;
 		Watch->Slam();
 		return;
 	}
-	LeftHand->SetControllerSelect(true);
-}
-
-void AMuseumPawn::OnSelectLeftCompleted(const FInputActionValue&)
-{
-	if (bLeftSelectToWatch)
-	{
-		bLeftSelectToWatch = false;
-		return;
-	}
-	LeftHand->SetControllerSelect(false);
+	LeftHand->SetControllerSelectAxis(Value);
 }
 
 void AMuseumPawn::OnWatch(const FInputActionValue&)
@@ -438,15 +441,22 @@ void AMuseumPawn::HandleOmnitrixRevert(bool bTimedOut)
 {
 	UE_LOG(LogAlienMuseum, Log, TEXT("Omnitrix: back to normal (%s)"), bTimedOut ? TEXT("timed out") : TEXT("turned back"));
 }
-void AMuseumPawn::OnSelectRightStarted(const FInputActionValue&) { RightHand->SetControllerSelect(true); }
-void AMuseumPawn::OnSelectRightCompleted(const FInputActionValue&) { RightHand->SetControllerSelect(false); }
-void AMuseumPawn::OnGrabLeftStarted(const FInputActionValue&) { LeftHand->SetControllerGrab(true); }
-void AMuseumPawn::OnGrabLeftCompleted(const FInputActionValue&) { LeftHand->SetControllerGrab(false); }
-void AMuseumPawn::OnGrabRightStarted(const FInputActionValue&) { RightHand->SetControllerGrab(true); }
-void AMuseumPawn::OnGrabRightCompleted(const FInputActionValue&) { RightHand->SetControllerGrab(false); }
+void AMuseumPawn::OnSelectRight(const FInputActionValue& Value) { RightHand->SetControllerSelectAxis(Value.Get<float>()); }
+void AMuseumPawn::OnSelectRightReleased(const FInputActionValue&) { RightHand->SetControllerSelectAxis(0.f); }
+void AMuseumPawn::OnGrabLeft(const FInputActionValue& Value) { LeftHand->SetControllerGrabAxis(Value.Get<float>()); }
+void AMuseumPawn::OnGrabLeftReleased(const FInputActionValue&) { LeftHand->SetControllerGrabAxis(0.f); }
+void AMuseumPawn::OnGrabRight(const FInputActionValue& Value) { RightHand->SetControllerGrabAxis(Value.Get<float>()); }
+void AMuseumPawn::OnGrabRightReleased(const FInputActionValue&) { RightHand->SetControllerGrabAxis(0.f); }
 
 void AMuseumPawn::OnMenu(const FInputActionValue&)
 {
+	// A button and the hand gesture at the same moment (or a double press) toggle it once.
+	const double Now = GetWorld()->GetTimeSeconds();
+	if (Now - LastMenuToggleTime < 0.4)
+	{
+		return;
+	}
+	LastMenuToggleTime = Now;
 	if (Mode != EMuseumPawnMode::Default)
 	{
 		CancelPlacement();
@@ -456,6 +466,15 @@ void AMuseumPawn::OnMenu(const FInputActionValue&)
 		Director->ToggleCollectionPanel();
 		UE_LOG(LogAlienMuseum, Log, TEXT("Menu button: collection %s"),
 			Director->GetPanel() && Director->GetPanel()->IsPanelVisible() ? TEXT("shown") : TEXT("hidden"));
+	}
+}
+
+void AMuseumPawn::HandleMenuPinch(UMuseumHandInteractor* Hand)
+{
+	// Quest's menu gesture: look at your left palm and pinch. (The right palm's pinch is the system's own button.)
+	if (Hand == LeftHand)
+	{
+		OnMenu(FInputActionValue());
 	}
 }
 
@@ -599,12 +618,24 @@ UMuseumHandInteractor* AMuseumPawn::GetOtherHand(const UMuseumHandInteractor* Ha
 
 UMuseumHandInteractor* AMuseumPawn::GetPointingHand() const
 {
-	// Prefer the right hand; fall back to the left one.
+	// The hand that pressed select last (it chose the alien); else the right hand, else the left one.
+	UMuseumHandInteractor* Last = LastSelectHand.Get();
+	if (Last && Last->IsTracked())
+	{
+		return Last;
+	}
 	if (RightHand->IsTracked())
 	{
 		return RightHand;
 	}
 	return LeftHand->IsTracked() ? LeftHand.Get() : nullptr;
+}
+
+FVector AMuseumPawn::GetShoulder(const UMuseumHandInteractor* Hand) const
+{
+	const FRotator FlatView(0.f, GetHeadRotation().Yaw, 0.f);
+	const float Side = Hand && Hand->GetHand() == EControllerHand::Left ? -1.f : 1.f;
+	return GetHeadLocation() + FVector(0.f, 0.f, -15.f) + FRotationMatrix(FlatView).GetScaledAxis(EAxis::Y) * (15.f * Side);
 }
 
 AAlienChamber* AMuseumPawn::FindNearestChamber(const FVector& Location, float MaxDistance) const
@@ -728,11 +759,21 @@ void AMuseumPawn::HandleSelect(UMuseumHandInteractor* Hand, bool bPressed)
 		return;
 	}
 
+	// This hand points from now on (placing a chamber follows it).
+	LastSelectHand = Hand;
+
 	// Holding an alien with the grip: the trigger does nothing.
 	if (GetAlienGrab(Hand).bActive)
 	{
 		return;
 	}
+
+	// A button or card under the ray: it wins over a case the hand happens to be near (life-size cases are big,
+	// and the hand is often within reach of one while pointing at the collection).
+	const FMuseumPointerHit& Hit = Hand->GetPointerHit();
+	AActor* HitActor = Hit.Actor.Get();
+	IMuseumInteractable* Interactable = Cast<IMuseumInteractable>(HitActor);
+	const bool bRayOnUI = Interactable && !Cast<AAlienChamber>(HitActor);
 
 	// A chamber's resize handle (at the hand or under the ray): drag it.
 	if (Mode == EMuseumPawnMode::Default && TryBeginResize(Hand, true))
@@ -775,18 +816,15 @@ void AMuseumPawn::HandleSelect(UMuseumHandInteractor* Hand, bool bPressed)
 		}
 	}
 
-	// Chamber right at the hand: always a grab.
-	if (Mode == EMuseumPawnMode::Default && FindNearestChamber(Hand->GetGrabLocation(), NearGrabDistance))
+	// Chamber right at the hand: a grab (unless the ray is on a button).
+	if (Mode == EMuseumPawnMode::Default && !bRayOnUI && FindNearestChamber(Hand->GetGrabLocation(), NearGrabDistance))
 	{
 		TryBeginGrab(Hand, true);
 		return;
 	}
 
 	// UI (panel buttons, cards) works in every mode.
-	const FMuseumPointerHit& Hit = Hand->GetPointerHit();
-	AActor* HitActor = Hit.Actor.Get();
-	IMuseumInteractable* Interactable = Cast<IMuseumInteractable>(HitActor);
-	if (Interactable && !Cast<AAlienChamber>(HitActor))
+	if (bRayOnUI)
 	{
 		Interactable->OnPointerSelect(Hit.Component.Get(), this);
 		return;
@@ -794,6 +832,7 @@ void AMuseumPawn::HandleSelect(UMuseumHandInteractor* Hand, bool bPressed)
 
 	if (Mode != EMuseumPawnMode::Default)
 	{
+		UpdatePlacement(0.f); // where this hand points (the preview may have followed the other one)
 		ConfirmPlacement();
 		return;
 	}
@@ -1256,9 +1295,11 @@ bool AMuseumPawn::TryBeginGrab(UMuseumHandInteractor* Hand, bool bFromSelect)
 	}
 
 	AAlienChamber* Target = FindNearestChamber(Hand->GetGrabLocation(), NearGrabDistance);
+	FVector GrabPoint = Hand->GetGrabLocation(); // held at the hand
 	if (!Target)
 	{
 		Target = Cast<AAlienChamber>(Hand->GetPointerHit().Actor.Get());
+		GrabPoint = Hand->GetPointerHit().Location; // taken hold of along the ray, maybe metres away
 	}
 	if (!Target || Target->IsBeingResized())
 	{
@@ -1274,7 +1315,7 @@ bool AMuseumPawn::TryBeginGrab(UMuseumHandInteractor* Hand, bool bFromSelect)
 	Grab.StartTime = GetWorld()->GetTimeSeconds();
 	Grab.StartHandLocation = Hand->GetGrabLocation();
 	Grab.bMoved = false;
-	ResetOneHandGrab(Hand, Target);
+	ResetOneHandGrab(Hand, Target, GrabPoint);
 	Hand->SetLaserEnabled(false);
 
 	const FHandGrab& Other = GetGrab(GetOtherHand(Hand));
@@ -1293,7 +1334,7 @@ bool AMuseumPawn::TryBeginGrab(UMuseumHandInteractor* Hand, bool bFromSelect)
 	return true;
 }
 
-void AMuseumPawn::ResetOneHandGrab(UMuseumHandInteractor* Hand, AAlienChamber* Chamber)
+void AMuseumPawn::ResetOneHandGrab(UMuseumHandInteractor* Hand, AAlienChamber* Chamber, const FVector& GrabPoint)
 {
 	FHandGrab& Grab = GetGrab(Hand);
 	const float Yaw = Hand->GetCarryYaw();
@@ -1301,6 +1342,20 @@ void AMuseumPawn::ResetOneHandGrab(UMuseumHandInteractor* Hand, AAlienChamber* C
 	Grab.LocalOffset = FRotator(0.f, -Yaw, 0.f).RotateVector(Chamber->GetActorLocation() - Hand->GetGrabLocation());
 	Grab.YawOffset = Chamber->GetActorRotation().Yaw - Yaw;
 	Grab.TargetScale = Chamber->GetChamberScale();
+
+	// Taken hold of far along the ray: the arm alone only reaches half a metre either way, so reaching out or pulling
+	// in carries it forward or back in proportion to how far off it is. Held at the hand it moves 1:1. The reach is
+	// measured from the shoulder, so swinging or raising the arm doesn't push or pull it. (On the desktop the "hand"
+	// is the camera ray: WASD walks it about instead.)
+	const FVector Shoulder = GetShoulder(Hand);
+	Grab.StartReach = static_cast<float>(FVector::Dist(Hand->GetGrabLocation(), Shoulder));
+	const float HoldDistance = static_cast<float>(FVector::Dist(GrabPoint, Shoulder));
+	Grab.DepthGain = bDesktopMode ? 1.f
+		: FMath::Clamp(HoldDistance / FMath::Max(20.f, Grab.StartReach), 1.f, FMath::Max(1.f, MaxCarryDepthGain));
+	// Never pulled onto the viewer: its centre stays a little over half its diagonal away (or as close as it was).
+	const FVector Outer = Chamber->GetOuterSize();
+	const float CenterDistance = static_cast<float>(FVector::Dist2D(Chamber->GetActorLocation(), GetHeadLocation()));
+	Grab.MinDistance = FMath::Min(CenterDistance, 0.5f * static_cast<float>(FVector2D(Outer.X, Outer.Y).Size()) + 30.f);
 }
 
 void AMuseumPawn::BeginTwoHandGrab(AAlienChamber* Chamber)
@@ -1336,7 +1391,8 @@ void AMuseumPawn::EndGrab(UMuseumHandInteractor* Hand)
 	if (GetGrab(Other).Chamber.Get() == Chamber)
 	{
 		bTwoHand = false;
-		ResetOneHandGrab(Other, Chamber);
+		const FMuseumPointerHit& OtherHit = Other->GetPointerHit();
+		ResetOneHandGrab(Other, Chamber, OtherHit.Actor.Get() == Chamber ? OtherHit.Location : Other->GetGrabLocation());
 		return;
 	}
 
@@ -1408,8 +1464,25 @@ void AMuseumPawn::UpdateGrabs(float DeltaSeconds)
 			Grab.bMoved = true;
 		}
 
+		// Reaching out / pulling in: a case held far along the ray goes forward / back DepthGain times as far as the
+		// hand (the hand's own movement plus the extra), along the ray's direction.
 		const float Yaw = Hand->GetCarryYaw();
-		const FVector Target = Hand->GetGrabLocation() + FRotator(0.f, Yaw, 0.f).RotateVector(Grab.LocalOffset);
+		const FVector Head = GetHeadLocation();
+		const float Reach = static_cast<float>(FVector::Dist(Hand->GetGrabLocation(), GetShoulder(Hand)));
+		// (A hand's tremor of a centimetre or so isn't a push: a click must leave the case exactly where it stands.)
+		const float ReachChange = Reach - Grab.StartReach;
+		FVector Offset = Grab.LocalOffset;
+		Offset.X += FMath::Sign(ReachChange) * FMath::Max(0.f, FMath::Abs(ReachChange) - 1.5f) * (Grab.DepthGain - 1.f);
+		FVector Target = Hand->GetGrabLocation() + FRotator(0.f, Yaw, 0.f).RotateVector(Offset);
+		// ... never onto the viewer.
+		const FVector2D FromHead(Target.X - Head.X, Target.Y - Head.Y);
+		const float Distance = static_cast<float>(FromHead.Size());
+		if (Distance < Grab.MinDistance && Distance > 1.f)
+		{
+			const FVector2D Out = FromHead * (Grab.MinDistance / Distance);
+			Target.X = Head.X + Out.X;
+			Target.Y = Head.Y + Out.Y;
+		}
 		Chamber->UpdateGrab(Target, Yaw + Grab.YawOffset, Grab.TargetScale);
 
 		if (!Grab.bMoved && FVector::Dist(Hand->GetGrabLocation(), Grab.StartHandLocation) > ClickMaxMove)

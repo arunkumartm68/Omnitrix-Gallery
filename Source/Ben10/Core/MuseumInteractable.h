@@ -25,4 +25,10 @@ public:
 
 	/** Trigger / pinch pressed while pointing at HitComponent. Return true if the press was used. */
 	virtual bool OnPointerSelect(UPrimitiveComponent* HitComponent, AMuseumPawn* Pawn) { return false; }
+
+	/**
+	 * A floating menu: it shows through the glass of a case in front of it, so the pointer reaches it through that
+	 * case too. (Life-size cases are big - one is often between you and the menu.)
+	 */
+	virtual bool IsPointedThroughCases() const { return false; }
 };

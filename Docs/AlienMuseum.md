@@ -120,8 +120,22 @@ c.tap_glass(p, 0.3)
 
 Controls on the headset: point + **trigger / pinch** to select, **grip** (hands: a **fist**) or trigger /
 pinch on a chamber to carry it, both hands to scale/rotate, thumbstick while carrying to rotate/resize,
-**X / Y / B / Menu** (or left-hand pinch-and-hold 1 s) to open the collection. With hand tracking a
-closed fist grabs (cases and aliens) and a pinch points and selects.
+**X / Y / B / Menu** to open the collection - with hand tracking, **look at your left palm and pinch** (Quest's
+menu gesture; that pinch never grabs anything), or pinch and hold 1 s pointing at nothing. With hand tracking
+a closed fist (the index curled in too) grabs cases and aliens and a pinch points and selects.
+
+* **Trigger and grip** press at 55% of their travel and let go under 35% (`ControllerPressThreshold` /
+  `ControllerReleaseThreshold` on the hands): a finger resting on the grip grabs nothing, and a trigger that
+  doesn't spring all the way back still lets go.
+* **Carrying a case you grabbed from afar**: reach out to push it away, pull your hand in to bring it closer -
+  it moves along the ray as many times further as it is further than your hand (up to `MaxCarryDepthGain` 8×;
+  a case 3 m away comes 60 cm closer for 10 cm of hand). Swing the ray to move it sideways. A case held at the
+  hand moves 1:1, and none can be pulled onto you.
+* **The collection** can be pointed at through a case's glass (a life-size case is often between you and it),
+  and a button under the ray wins over a case your hand happens to be touching.
+* **Placing** follows the hand you last pressed with (the one that picked the alien), left or right.
+* The laser rides on the controller (late-updated with it) and the pointer reads the controller after it has
+  moved each frame, so the ray stays on the real controller you see through passthrough.
 
 **Controller input on Quest.** The OpenXR runtime only delivers the Touch controllers' triggers, grips,
 sticks and buttons to input actions whose mapping context is listed in `Config/DefaultInput.ini` →
