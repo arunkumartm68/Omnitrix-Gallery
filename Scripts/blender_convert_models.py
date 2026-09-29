@@ -83,13 +83,19 @@ MODELS = {
                                    pose={"bip_upperarm_L": 60, "bip_upperarm_R": 60}),
     "upgrade-ben-10-vilgax-attacks-fan-model": dict(id="Upgrade_2", alien="Upgrade", height=52,
                                                     pose={"LeftUpperArm": 30, "RightUpperArm": 30}),
-    # On all fours: the front paws planted a little ahead of and outside the shoulders, elbows bent
-    # back like a gorilla's, claws on the ground. The game walks him with IK from this stance.
-    # His front arms stay as the model has them (spread wide, paws down; the user's choice): bending them down to the
-    # ground put their claws below his hind feet, and he floated above the floor of his case.
-    # His arms reach out 2.6 times his height: max_span keeps him 40 cm tall (each case is made for its alien now).
+    # Wildmutt stands like the show's: on all fours like a gorilla, leaning forward onto long arms planted wide, paws
+    # flat on the floor - palm down, claws forward - exactly level with his hind feet (the lowest point decides where
+    # a model stands: a claw below the feet would float him). The game walks him with IK from this stance.
+    # max_span keeps him 40 cm tall with his wide stance (1.6 times his height across).
     "wildmutt": dict(id="Wildmutt", alien="Wildmutt", height=40, max_span=110.0, rotate=(0, 0, -90), rigged=True,
-                     colors={"Body": (0.9, 0.28, 0.03), "Body_1": (0.9, 0.28, 0.03)}),  # the cartoon's orange, not yellow
+                     colors={"Body": (0.9, 0.28, 0.03), "Body_1": (0.9, 0.28, 0.03)},  # the cartoon's orange, not yellow
+                     gorilla=dict(arm=("bip_upperArm_L", "bip_lowerArm_L", "bip_hand_L"),
+                                  paw=["bip_hand_L", "bip_thumb_0_L", "bip_thumb_1_L", "bip_thumb_2_L",
+                                       "bip_index_0_L", "bip_index_1_L", "bip_index_2_L", "bip_middle_0_L",
+                                       "bip_middle_1_L", "bip_middle_2_L", "bip_pinky_0_L", "bip_pinky_1_L", "bip_pinky_2_L"],
+                                  claws=["bip_index_2_L", "bip_middle_2_L", "bip_pinky_2_L"],
+                                  feet=["bip_foot_L", "bip_toe_index_L", "bip_toe_middle_L", "bip_toe_pinky_L"],
+                                  lean_bone="bip_spine_1", lean=8.0, outward=0.32, straight=0.95, paw_yaw=15.0)),
     # Ben 10: Protector of Earth (Wii) Cannonbolt: the standing figure and his rolled-up ball form.
     "cannonbolt-wii": dict(id="Cannonbolt_3", alien="Cannonbolt", height=50,
                            folder="ben-10-cannonbolt-and-ball", file="Model.obj"),
@@ -468,6 +474,98 @@ def two_bone_ik(arm, names, target, pole, aim):
         turn_bone(arm, end, tip_now, aim_rotation((mw @ end.tail) - tip_now, aim))
     print(f"  ik: {names[2]} at {tuple(round(c, 3) for c in (mw @ end.head))} (wanted {tuple(round(c, 3) for c in target)}), "
           f"elbow bent {math.degrees(math.acos(cos_a)):.0f} deg")
+
+
+def evaluated_points(bone_names, min_weight=0.5):
+    """World positions, as the rig deforms them now, of the vertices mostly moved by these bones."""
+    dg = bpy.context.evaluated_depsgraph_get()
+    points = []
+    for obj in common.mesh_objects():
+        groups = {g.index: g.name for g in obj.vertex_groups}
+        wanted = {i for i, n in groups.items() if n in bone_names}
+        if not wanted:
+            continue
+        evaluated = obj.evaluated_get(dg)
+        mesh = evaluated.to_mesh()
+        for vertex, moved in zip(obj.data.vertices, mesh.vertices):
+            if sum(g.weight for g in vertex.groups if g.group in wanted) >= min_weight:
+                points.append(evaluated.matrix_world @ moved.co)
+        evaluated.to_mesh_clear()
+    return points
+
+
+def plant_front_paws(spec, lo, hi):
+    """Front legs gorilla style (Wildmutt in the show): the chest leans forward `lean` degrees, each arm reaches down
+    and `outward` (x height) to the ground, `straight` of its full reach (a slight bend, the elbow bowing out), and its
+    paw lies flat - palm down, claws forward and `paw_yaw` degrees out - with its lowest point exactly on the floor
+    the hind feet stand on. The left side is given; the right one is mirrored."""
+    arm = armature()
+    if not spec or arm is None:
+        return
+    mw = arm.matrix_world
+    height = hi.z - lo.z
+    side_name = lambda name, side: name if side > 0 else mirror_name(name)
+    feet = {side_name(n, side) for n in spec["feet"] for side in (1.0, -1.0)}
+    ground = min(p.z for p in evaluated_points(feet, 0.3))
+
+    lean_bone = arm.pose.bones.get(spec.get("lean_bone", ""))
+    if lean_bone and spec.get("lean"):
+        conv_axis = Vector((1.0, 0.0, 0.0))  # the character faces -Y: turning around +X tips the chest forward and down
+        turn_bone(arm, lean_bone, mw @ lean_bone.head, Quaternion(conv_axis, math.radians(spec["lean"])))
+
+    def paw_frame(side):
+        """The paw's long axis (wrist -> claw tips) and an axis fixed to it (the hand bone's Z), as it is now."""
+        hand = arm.pose.bones[side_name(spec["arm"][2], side)]
+        wrist = mw @ hand.head
+        tips = [mw @ arm.pose.bones[side_name(n, side)].tail for n in spec["claws"] if arm.pose.bones.get(side_name(n, side))]
+        long_axis = (sum(tips, Vector()) / len(tips) - wrist).normalized()
+        fixed = (mw.to_3x3() @ hand.matrix.to_3x3() @ Vector((0.0, 0.0, 1.0))).normalized()
+        return long_axis, fixed
+
+    def basis(x_axis, up):
+        x = x_axis.normalized()
+        z = (up - x * up.dot(x)).normalized()
+        return Matrix((x, z.cross(x), z)).transposed()
+
+    # One forward distance for both paws (the arms differ by a hair): as far as leaves the shorter arm `straight`.
+    forwards = []
+    for side in (1.0, -1.0):
+        upper, lower, end = (arm.pose.bones[side_name(n, side)] for n in spec["arm"])
+        shoulder = mw @ upper.head
+        reach = (lower.head - upper.head).length + (end.head - lower.head).length
+        drop = shoulder.z - (ground + 0.075 * height)
+        level = math.sqrt(max(0.0, (spec["straight"] * reach) ** 2 - drop ** 2))
+        forwards.append(math.sqrt(max(0.0, level ** 2 - (spec["outward"] * height) ** 2)))
+    forward = min(forwards)
+
+    yaw = math.radians(spec.get("paw_yaw", 15.0))
+    paw_bones = spec["paw"]
+    for side in (1.0, -1.0):
+        names = tuple(side_name(n, side) for n in spec["arm"])
+        shoulder = mw @ arm.pose.bones[names[0]].head
+        pole = shoulder + Vector((side * 0.6, 0.35, -0.1)) * height  # the elbow bows out and back
+        want_long = Vector((side * math.sin(yaw), -math.cos(yaw), -0.06)).normalized()
+        want = basis(want_long, Vector((0.0, 0.0, 1.0)))
+
+        def pose(wrist_height):
+            target = Vector((shoulder.x + side * spec["outward"] * height, shoulder.y - forward, ground + wrist_height))
+            two_bone_ik(arm, names, target, pole, None)
+            hand = arm.pose.bones[names[2]]
+            long_axis, fixed = paw_frame(side)
+            # turn the paw flat: its claws along want_long, the back of the paw (the hand bone's Z) up - palm down
+            turn = (want @ basis(long_axis, fixed).inverted()).to_quaternion()
+            turn_bone(arm, hand, mw @ hand.head, turn)
+
+        # The wrist so high that the flat paw's lowest point touches the floor (measured on the skinned mesh).
+        wrist_height = 0.1 * height
+        paw = {side_name(n, side) for n in paw_bones}
+        for _ in range(4):
+            pose(wrist_height)
+            wrist_height -= min(p.z for p in evaluated_points(paw)) - ground
+        pose(wrist_height)
+        heights = sorted(p.z - ground for p in evaluated_points(paw))
+        print(f"  gorilla: {names[2]} lowest {heights[0] * 100:+.2f} cm (model units x100), "
+              f"{sum(1 for h in heights if h < 0.02 * height) * 100 // len(heights)}% of the paw within 2% of the floor")
 
 
 def place_limbs(specs, lo, hi):
@@ -999,6 +1097,7 @@ def convert(folder_name, cfg, downloads, out_dir):
         skin_loose_meshes(armature())
     pose_arms(cfg.get("pose"), common.mesh_objects())
     place_limbs(cfg.get("ik"), rest_lo, rest_hi)
+    plant_front_paws(cfg.get("gorilla"), rest_lo, rest_hi)
     if cfg.get("rigged"):
         static, rig_glb, triangles, bones = finish_rigged(cfg, out_dir)
         glb = os.path.join(out_dir, cfg["id"] + ".glb")

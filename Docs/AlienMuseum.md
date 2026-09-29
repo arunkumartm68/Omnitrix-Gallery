@@ -268,7 +268,7 @@ In a room with a 2.7 m ceiling (the editor's):
 | Ghostfreak | 1.78 m | life size | 2.12 × 2.40 × 2.60 m |
 | Stinkfly | 1.65 m | 94% | 2.94 × 2.93 × 2.67 m |
 | XLR8 (1), (2) | 1.47 m | life size | 1.90 (2.01) × 2.66 × 1.87 m |
-| Wildmutt | 1.37 m | life size | 2.25 × 2.47 × 1.87 m |
+| Wildmutt | 1.37 m | life size | 2.97 × 3.19 × 1.87 m |
 | Ditto | 1.15 m | life size | 1.45 × 1.79 × 1.60 m |
 | Wildvine | 1.10 m (sprawled) | life size | 2.77 × 2.94 × 1.58 m |
 | Echo Echo | 0.95 m * | life size | 1.37 × 1.53 × 1.36 m |
@@ -472,9 +472,10 @@ and FM tones. Random seeds are fixed, so the same files come out every run.
   look around and nod with the steps, `Jaw` pants and snarls, `bSniffs` lifts the nose to sniff now and
   then, `Tail` waves (`TailAmount`, `TailSpeed`), `Floating` bones drift. `StrideLength` / `StepHeight`
   in model heights. With `bFrontLegsWalk` off the front legs are arms: they keep the model's own pose and ride
-  with the body, and only reach out to paw at something. Wildmutt walks on his hind legs this way, his front
-  arms as the downloaded model has them (spread wide, paws down), and Ghostfreak's tail waves; the settings live
-  in `RIGS` in `Scripts/import_downloaded_models.py`. A rig with front legs can also stand up with its
+  with the body, and only reach out to paw at something. Wildmutt walks on all fours like a gorilla, as in the
+  show - leaning forward onto long front legs, his paws planted flat (palm down, claws forward) - and
+  Ghostfreak's tail waves; the settings live in `RIGS` in `Scripts/import_downloaded_models.py`. A rig with
+  front legs can also stand up with its
   front paws on something (`SetFrontReach`: Wildmutt at the glass). Console `Museum.RigTestSpeed 14` makes rigged
   aliens step on the spot as if walking at 14 cm/s (for checking the gait; 0 = off).
 * **Animated models** – `Clips` (the model's own hand-made animations, imported with its `RiggedMesh`:
@@ -529,9 +530,11 @@ in this order:
    Moving parts (`parts`: Stinkfly's wings) are kept out of the model and written per side as
    `<Id>_WingL.glb` / `<Id>_WingR.glb` in the same frame, with the joint each swings around (the middle
    and direction of the wing's base) in `manifest.json`. Rigged models (`rigged`: Wildmutt, Ghostfreak)
-   keep their skeleton: the stance set up with `pose` and `ik` (two-bone IK - Wildmutt's front paws are
-   planted on the ground under his shoulders) becomes the rig's rest pose, meshes that only followed a bone
-   get skinned to it, unused tip bones are dropped, and `<Id>_Rig.glb` (skinned) is written next to the
+   keep their skeleton: the stance set up with `pose`, `ik` (two-bone IK) and `gorilla` (Wildmutt: the chest
+   leans forward and the front legs reach down and out to the ground, each paw flat - palm down, claws forward -
+   with its lowest point exactly level with the hind feet, measured on the skinned mesh) becomes the rig's rest
+   pose, meshes that only followed a bone get skinned to it, unused tip bones are dropped, and `<Id>_Rig.glb`
+   (skinned) is written next to the
    static `<Id>.glb`. Animated models (`animated`: Benwolf, a game model with 15 hand-made takes) keep
    their rest pose and the takes listed in `clips` (renamed to the game's clip names and exported with
    `<Id>_Rig.glb`); `drop` (any model) leaves objects out - a duplicate body, Buzzshock's blend-shape
@@ -638,8 +641,6 @@ Resonance renders all sources into one third-order ambisonic mix decoded once fo
   A saved case that held one of them comes back empty.
 * Heatblast, Benmummy, Benvicktor, Buzzshock and Eye Guy have no voices or footsteps of their own (their
   moves still play the shared move sounds).
-* Wildmutt keeps his front arms as the downloaded model has them - spread wide, 2.6 times his height across - so
-  his case is wide (4.2 m at life size) and in an ordinary room he shows near the museum's normal size.
 * Life size is big: most cases are 2-2.5 m across and Cannonbolt's is 4.5 m, so in an ordinary room most
   aliens come out smaller than life size (the info panel says why) - zoom cases down to fit more of them.
   A case made smaller (by the room or the handles) leaves a wide alien like Cannonbolt little room to roll or
