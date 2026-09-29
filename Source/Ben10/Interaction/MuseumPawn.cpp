@@ -9,6 +9,7 @@
 #include "Core/MuseumDirector.h"
 #include "Core/MuseumInteractable.h"
 #include "MR/MuseumSceneComponent.h"
+#include "Omnitrix/OmnitrixWatch.h"
 #include "Data/AlienDataAsset.h"
 #include "UI/AlienCollectionPanel.h"
 #include "Ben10.h"
@@ -111,6 +112,8 @@ AMuseumPawn::AMuseumPawn()
 	static ConstructorHelpers::FObjectFinder<UInputAction> AdjustAsset(TEXT("/Game/AlienMuseum/Input/IA_Museum_Adjust.IA_Museum_Adjust"));
 	static ConstructorHelpers::FObjectFinder<UInputAction> LookAsset(TEXT("/Game/AlienMuseum/Input/IA_Museum_Look.IA_Museum_Look"));
 	static ConstructorHelpers::FObjectFinder<UInputAction> MoveAsset(TEXT("/Game/AlienMuseum/Input/IA_Museum_Move.IA_Museum_Move"));
+	static ConstructorHelpers::FObjectFinder<UInputAction> WatchAsset(TEXT("/Game/AlienMuseum/Input/IA_Museum_Watch.IA_Museum_Watch"));
+	static ConstructorHelpers::FObjectFinder<UInputAction> WatchDialAsset(TEXT("/Game/AlienMuseum/Input/IA_Museum_WatchDial.IA_Museum_WatchDial"));
 	InputMapping = MappingAsset.Object;
 	SelectLeftAction = SelectLeftAsset.Object;
 	SelectRightAction = SelectRightAsset.Object;
@@ -121,6 +124,8 @@ AMuseumPawn::AMuseumPawn()
 	AdjustAction = AdjustAsset.Object;
 	LookAction = LookAsset.Object;
 	MoveAction = MoveAsset.Object;
+	WatchAction = WatchAsset.Object;
+	WatchDialAction = WatchDialAsset.Object;
 }
 
 void AMuseumPawn::BeginPlay()
@@ -148,6 +153,21 @@ void AMuseumPawn::BeginPlay()
 	ConfigureForDisplayMode();
 	CreateDefaultInput();
 	ApplyInputMapping();
+
+	// The Omnitrix on the left wrist (unfinished: off unless bWearOmnitrix).
+	if (!bWearOmnitrix)
+	{
+		return;
+	}
+	FActorSpawnParameters WatchSpawn;
+	WatchSpawn.Owner = this;
+	Watch = GetWorld()->SpawnActor<AOmnitrixWatch>(AOmnitrixWatch::StaticClass(), GetActorTransform(), WatchSpawn);
+	if (Watch)
+	{
+		Watch->Setup(LeftHand, RightHand, Camera);
+		Watch->OnTransform.AddDynamic(this, &AMuseumPawn::HandleOmnitrixTransform);
+		Watch->OnRevert.AddDynamic(this, &AMuseumPawn::HandleOmnitrixRevert);
+	}
 }
 
 void AMuseumPawn::ConfigureForDisplayMode()
@@ -198,6 +218,8 @@ void AMuseumPawn::CreateDefaultInput()
 	MakeAction(AdjustAction, TEXT("IA_Museum_Adjust"), EInputActionValueType::Axis2D);
 	MakeAction(LookAction, TEXT("IA_Museum_Look"), EInputActionValueType::Axis2D);
 	MakeAction(MoveAction, TEXT("IA_Museum_Move"), EInputActionValueType::Axis2D);
+	MakeAction(WatchAction, TEXT("IA_Museum_Watch"), EInputActionValueType::Boolean);
+	MakeAction(WatchDialAction, TEXT("IA_Museum_WatchDial"), EInputActionValueType::Axis1D);
 
 	if (InputMapping)
 	{
@@ -261,6 +283,12 @@ void AMuseumPawn::CreateDefaultInput()
 	}
 	Map(MoveAction, TEXT("D"));
 	Negate(Map(MoveAction, TEXT("A")));
+	Map(WatchAction, TEXT("OculusTouch_Left_Thumbstick_Click"));
+	Map(WatchAction, TEXT("F"));
+	Map(WatchDialAction, TEXT("OculusTouch_Left_Thumbstick_X"))->Modifiers.Add(NewObject<UInputModifierDeadZone>(Mapping));
+	Map(WatchDialAction, TEXT("MouseWheelAxis"));
+	Map(WatchDialAction, TEXT("Period"));
+	Negate(Map(WatchDialAction, TEXT("Comma")));
 }
 
 void AMuseumPawn::ApplyInputMapping()
@@ -313,10 +341,90 @@ void AMuseumPawn::SetupPlayerInputComponent(UInputComponent* PlayerInputComponen
 	Input->BindAction(AdjustAction, ETriggerEvent::Completed, this, &AMuseumPawn::OnAdjustCompleted);
 	Input->BindAction(LookAction, ETriggerEvent::Triggered, this, &AMuseumPawn::OnLook);
 	Input->BindAction(MoveAction, ETriggerEvent::Triggered, this, &AMuseumPawn::OnMove);
+	Input->BindAction(WatchAction, ETriggerEvent::Started, this, &AMuseumPawn::OnWatch);
+	Input->BindAction(WatchDialAction, ETriggerEvent::Triggered, this, &AMuseumPawn::OnWatchDial);
+	Input->BindAction(WatchDialAction, ETriggerEvent::Completed, this, &AMuseumPawn::OnWatchDialCompleted);
 }
 
-void AMuseumPawn::OnSelectLeftStarted(const FInputActionValue&) { LeftHand->SetControllerSelect(true); }
-void AMuseumPawn::OnSelectLeftCompleted(const FInputActionValue&) { LeftHand->SetControllerSelect(false); }
+void AMuseumPawn::OnSelectLeftStarted(const FInputActionValue&)
+{
+	// The dial is open: the left trigger slams it (the watch hand's pointer clicks nothing meanwhile).
+	if (Watch && Watch->IsDialOpen())
+	{
+		bLeftSelectToWatch = true;
+		Watch->Slam();
+		return;
+	}
+	LeftHand->SetControllerSelect(true);
+}
+
+void AMuseumPawn::OnSelectLeftCompleted(const FInputActionValue&)
+{
+	if (bLeftSelectToWatch)
+	{
+		bLeftSelectToWatch = false;
+		return;
+	}
+	LeftHand->SetControllerSelect(false);
+}
+
+void AMuseumPawn::OnWatch(const FInputActionValue&)
+{
+	if (Watch)
+	{
+		Watch->Press();
+	}
+}
+
+void AMuseumPawn::OnWatchDial(const FInputActionValue& Value)
+{
+	if (Watch)
+	{
+		Watch->DialStick(Value.Get<float>());
+	}
+}
+
+void AMuseumPawn::OnWatchDialCompleted(const FInputActionValue&)
+{
+	if (Watch)
+	{
+		Watch->DialStick(0.f);
+	}
+}
+
+void AMuseumPawn::UpdateWatchHands()
+{
+	// A hand working the watch up close is busy there: it clicks and grabs nothing else meanwhile. It only
+	// becomes busy with nothing in it (reaching for the watch never drops what it carries).
+	if (!Watch)
+	{
+		return;
+	}
+	for (UMuseumHandInteractor* Hand : { LeftHand.Get(), RightHand.Get() })
+	{
+		const bool bWanted = Watch->WantsHand(Hand);
+		if (!bWanted)
+		{
+			Hand->SetBusy(false);
+		}
+		else if (!Hand->IsBusy() && !Hand->IsSelectPressed() && !Hand->IsGrabPressed() && !GetGrab(Hand).Chamber.IsValid()
+			&& !GetAlienGrab(Hand).Alien.IsValid())
+		{
+			Hand->SetBusy(true);
+		}
+	}
+}
+
+void AMuseumPawn::HandleOmnitrixTransform(UAlienDataAsset* Alien)
+{
+	// Step 5 brings the alien out life-size; for now the watch keeps the time.
+	UE_LOG(LogAlienMuseum, Log, TEXT("Omnitrix: transformed into %s"), *GetNameSafe(Alien));
+}
+
+void AMuseumPawn::HandleOmnitrixRevert(bool bTimedOut)
+{
+	UE_LOG(LogAlienMuseum, Log, TEXT("Omnitrix: back to normal (%s)"), bTimedOut ? TEXT("timed out") : TEXT("turned back"));
+}
 void AMuseumPawn::OnSelectRightStarted(const FInputActionValue&) { RightHand->SetControllerSelect(true); }
 void AMuseumPawn::OnSelectRightCompleted(const FInputActionValue&) { RightHand->SetControllerSelect(false); }
 void AMuseumPawn::OnGrabLeftStarted(const FInputActionValue&) { LeftHand->SetControllerGrab(true); }
@@ -417,7 +525,8 @@ AAlienChamber* AMuseumPawn::FindRemoveButton(const UMuseumHandInteractor* Hand) 
 
 void AMuseumPawn::OnAdjust(const FInputActionValue& Value)
 {
-	AdjustInput = Value.Get<FVector2D>();
+	// The left stick turns the watch's dial while it is open: it doesn't turn or scale anything else then.
+	AdjustInput = Watch && Watch->IsDialOpen() ? FVector2D::ZeroVector : Value.Get<FVector2D>();
 }
 
 void AMuseumPawn::OnAdjustCompleted(const FInputActionValue&)
@@ -1606,4 +1715,5 @@ void AMuseumPawn::Tick(float DeltaSeconds)
 	UpdatePlacement(DeltaSeconds);
 	UpdateMenuGesture(DeltaSeconds);
 	UpdateGlassTaps(DeltaSeconds);
+	UpdateWatchHands();
 }

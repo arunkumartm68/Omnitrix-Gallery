@@ -70,8 +70,11 @@ void UMuseumHandInteractor::SetLaserOverride(const FVector& EndPoint, const FLin
 	LaserOverrideColor = Color;
 }
 
-void UMuseumHandInteractor::SetSelectState(bool bPressed)
+void UMuseumHandInteractor::SetSelectState(bool bRawPressed)
 {
+	// Pressed while busy with the watch: ignored until let go (so no click lands on what the laser crosses).
+	bSelectLatched = bRawPressed && (bSelectLatched || bBusy);
+	const bool bPressed = bRawPressed && !bSelectLatched;
 	if (bPressed != bSelectPressed)
 	{
 		bSelectPressed = bPressed;
@@ -79,8 +82,10 @@ void UMuseumHandInteractor::SetSelectState(bool bPressed)
 	}
 }
 
-void UMuseumHandInteractor::SetGrabState(bool bPressed)
+void UMuseumHandInteractor::SetGrabState(bool bRawPressed)
 {
+	bGrabLatched = bRawPressed && (bGrabLatched || bBusy);
+	const bool bPressed = bRawPressed && !bGrabLatched;
 	if (bPressed != bGrabPressed)
 	{
 		bGrabPressed = bPressed;
@@ -129,7 +134,20 @@ bool UMuseumHandInteractor::UpdateFromHandTracking()
 	bPinching = !bFist && (bPinching ? PinchDistance < PinchEndDistance : PinchDistance < PinchStartDistance);
 
 	// Grab point: the palm inside a fist, else between thumb and index. Set before the events fire.
-	GrabLocation = bFist ? Palm : (ThumbTip + IndexTip) * 0.5f;
+	PinchPoint = (ThumbTip + IndexTip) * 0.5f;
+	GrabLocation = bFist ? Palm : PinchPoint;
+
+	// The wrist frame, from the joints (whatever the runtime's joint axes): along the hand, across it towards
+	// the thumb, out of its back.
+	const FVector Wrist = Key(EHandKeypoint::Wrist);
+	const FVector Along = Key(EHandKeypoint::MiddleProximal) - Wrist;
+	const FVector Across = IndexKnuckle - Key(EHandKeypoint::LittleProximal); // little finger -> index: the thumb side
+	const FVector Back = Hand == EControllerHand::Left ? FVector::CrossProduct(Along, Across) : FVector::CrossProduct(Across, Along);
+	if (!Along.IsNearlyZero() && !Back.IsNearlyZero())
+	{
+		WristPose = FTransform(FRotationMatrix::MakeFromXZ(Along, Back).ToQuat(), Wrist);
+		bHasWristPose = true;
+	}
 	// Taps come from the fingertip; a pinch or a fist is busy selecting or grabbing.
 	TapPoint = IndexTip;
 	bHasTapPoint = !bFist && !bPinching;
@@ -152,6 +170,8 @@ bool UMuseumHandInteractor::UpdateFromController()
 	// The aim pose sits at the front of the controller: its tip knocks on glass.
 	TapPoint = AimOrigin + AimDirection * 1.5f;
 	bHasTapPoint = true;
+	WristPose = bGripTracked ? GripController->GetComponentTransform() : AimController->GetComponentTransform();
+	bHasWristPose = true;
 	SetSelectState(bControllerSelect);
 	SetGrabState(bControllerGrab);
 	return true;
@@ -189,6 +209,7 @@ void UMuseumHandInteractor::TickComponent(float DeltaTime, ELevelTick TickType, 
 	if (NewSource == EMuseumHandSource::None || NewSource == EMuseumHandSource::Desktop)
 	{
 		bHasTapPoint = false;
+		bHasWristPose = false;
 	}
 	Source = NewSource;
 
@@ -256,10 +277,10 @@ void UMuseumHandInteractor::UpdateVisuals()
 	}
 
 	const bool bTracked = Source != EMuseumHandSource::None;
-	const bool bShowLaser = bLaserEnabled && bTracked && Source != EMuseumHandSource::Desktop;
+	const bool bShowLaser = bLaserEnabled && !bBusy && bTracked && Source != EMuseumHandSource::Desktop;
 	const bool bHasEnd = bHasLaserOverride || PointerHit.bHit;
 	Laser->SetVisibility(bShowLaser);
-	Reticle->SetVisibility(bLaserEnabled && bTracked && bHasEnd);
+	Reticle->SetVisibility(bLaserEnabled && !bBusy && bTracked && bHasEnd);
 	if (!bTracked)
 	{
 		return;

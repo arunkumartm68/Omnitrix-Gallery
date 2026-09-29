@@ -20,6 +20,7 @@ class USkeletalMesh;
 class UAnimSequence;
 class UChamberHabitatAsset;
 class USoundBase;
+class UTexture2D;
 
 /** Signature move an alien performs now and then, and to show off to a visitor (UAlienActionComponent). */
 UENUM(BlueprintType)
@@ -463,6 +464,10 @@ public:
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Identity", meta = (MultiLine = true))
 	FText Description;
+
+	/** Its shape on the Omnitrix dial: white on black, upright (Scripts/omnitrix_silhouettes.py makes them). */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Identity")
+	TSoftObjectPtr<UTexture2D> OmnitrixSilhouette;
 
 	// ---------- Spawning ----------
 

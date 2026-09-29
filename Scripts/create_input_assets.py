@@ -28,6 +28,8 @@ ACTIONS = {
     "IA_Museum_Adjust": T.AXIS2D,
     "IA_Museum_Look": T.AXIS2D,
     "IA_Museum_Move": T.AXIS2D,
+    "IA_Museum_Watch": T.BOOLEAN,       # the Omnitrix's button
+    "IA_Museum_WatchDial": T.AXIS1D,    # the Omnitrix's dial
 }
 
 # (action, key, modifiers): "deadzone", "swizzle" (X -> Y), "negate".
@@ -43,6 +45,8 @@ MAPPINGS = [
     ("IA_Museum_Menu", "OculusTouch_Left_Menu_Click", []),
     ("IA_Museum_Adjust", "OculusTouch_Left_Thumbstick_2D", ["deadzone"]),
     ("IA_Museum_Adjust", "OculusTouch_Right_Thumbstick_2D", ["deadzone"]),
+    ("IA_Museum_Watch", "OculusTouch_Left_Thumbstick_Click", []),
+    ("IA_Museum_WatchDial", "OculusTouch_Left_Thumbstick_X", ["deadzone"]),
     # Desktop testing.
     ("IA_Museum_SelectRight", "LeftMouseButton", []),
     ("IA_Museum_GrabRight", "RightMouseButton", []),
@@ -57,6 +61,10 @@ MAPPINGS = [
     ("IA_Museum_Move", "S", ["swizzle", "negate"]),
     ("IA_Museum_Move", "D", []),
     ("IA_Museum_Move", "A", ["negate"]),
+    ("IA_Museum_Watch", "F", []),
+    ("IA_Museum_WatchDial", "MouseWheelAxis", []),
+    ("IA_Museum_WatchDial", "Period", []),
+    ("IA_Museum_WatchDial", "Comma", ["negate"]),
 ]
 
 MODIFIERS = {

@@ -93,6 +93,27 @@ public:
 	/** A short buzz on this hand's controller (nothing with hand tracking). Amplitude 0..1. */
 	void PulseHaptics(float Amplitude, float Duration = 0.04f);
 
+	/**
+	 * The wrist, for a watch. Hand tracking: a frame built from the joints - X along the hand to the fingers,
+	 * Y across it (towards the thumb on the left hand), Z out of the back of the hand - at the wrist joint.
+	 * Controller: the grip pose. False on the desktop and while the hand is lost.
+	 */
+	bool GetWristPose(FTransform& OutPose) const { OutPose = WristPose; return bHasWristPose; }
+
+	/** The controller's grip pose (a watch rides on it, late-updated with the controller). */
+	UMotionControllerComponent* GetGripController() const { return GripController; }
+
+	/** Hand tracking: pinching, and where (between the thumb and index tips) - even while busy. */
+	bool IsPinching() const { return bPinching; }
+	FVector GetPinchPoint() const { return PinchPoint; }
+
+	/**
+	 * Busy (working the watch up close): its trigger / pinch and grip / fist select and grab nothing and its
+	 * laser is off. A button pressed while busy stays ignored until it is let go.
+	 */
+	void SetBusy(bool bInBusy) { bBusy = bInBusy; }
+	bool IsBusy() const { return bBusy; }
+
 	// ---- Visual overrides (valid for the current frame) ----
 	/** Makes the laser end at EndPoint with the given colour, e.g. for a placement preview. */
 	void SetLaserOverride(const FVector& EndPoint, const FLinearColor& Color);
@@ -171,6 +192,12 @@ private:
 
 	FVector TapPoint = FVector::ZeroVector;
 	bool bHasTapPoint = false;
+	FTransform WristPose;
+	bool bHasWristPose = false;
+	FVector PinchPoint = FVector::ZeroVector;
+	bool bBusy = false;
+	bool bSelectLatched = false; // pressed while busy: ignored until let go
+	bool bGrabLatched = false;
 	FTimerHandle HapticTimer;
 
 	bool bHasDesktopRay = false;

@@ -301,6 +301,18 @@ Knock on a case like on an aquarium and its alien answers.
   the glass (`GapToGlass`). An alien that can't get to the glass (a prop, or the case too small for it)
   answers from where it is without touching it.
 
+## Omnitrix watch (unfinished, off)
+
+`AOmnitrixWatch` (`Source/Ben10/Omnitrix/`) is the classic Omnitrix on the left wrist: it wakes when you look at
+it, the left thumbstick click (F on the desktop) pops the core up as a dial of the aliens' silhouettes with the
+name above, the left stick (mouse wheel, `,` `.`) turns it, the left trigger slams it; hand tracking pokes the side
+button, pinches and twists the core, pushes it down. A transformation lasts 3 minutes (beeping and flashing red for
+the last 20 s), then it recharges red for 20 s. It is unfinished - nothing comes out when it is slammed and it was
+never tried on the headset - so `BP_MuseumPawn` → `bWearOmnitrix` is off. The face is `M_OmnitrixFace` (drawn from
+its UVs); the silhouettes come from the models: `Scripts/omnitrix_silhouettes.py dump`, then
+`python Scripts/make_omnitrix_silhouettes.py`, then `omnitrix_silhouettes.py import`
+(`/Game/AlienMuseum/Omnitrix/Silhouettes`, each alien's `OmnitrixSilhouette`).
+
 ## Sound
 
 Every sound is original: `Scripts/make_museum_sounds.py` synthesises them from oscillators, noise, filters and

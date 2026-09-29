@@ -34,6 +34,7 @@ class UAlienDataAsset;
 class AAlienChamber;
 class AAlienCharacter;
 class AMuseumDirector;
+class AOmnitrixWatch;
 struct FInputActionValue;
 
 UENUM(BlueprintType)
@@ -79,6 +80,10 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Museum")
 	FRotator GetHeadRotation() const;
 
+	/** The Omnitrix on the left wrist. */
+	UFUNCTION(BlueprintPure, Category = "Museum")
+	AOmnitrixWatch* GetWatch() const { return Watch; }
+
 	// ---------- Input (optional assets; sensible defaults are created at runtime when empty) ----------
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Input")
@@ -114,6 +119,14 @@ public:
 	/** Desktop testing only. */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Input")
 	TObjectPtr<UInputAction> MoveAction;
+
+	/** The Omnitrix's button (left thumbstick click; F on the desktop). */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Input")
+	TObjectPtr<UInputAction> WatchAction;
+
+	/** The Omnitrix's dial (left thumbstick left / right; the mouse wheel or , and . on the desktop). */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Input")
+	TObjectPtr<UInputAction> WatchDialAction;
 
 	// ---------- Tuning ----------
 
@@ -186,6 +199,13 @@ public:
 	/** ...and this fast or faster, it is a hard knock (a startled alien). */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Museum|Glass", meta = (Units = "cm/s"))
 	float TapKnockSpeed = 150.f;
+
+	/**
+	 * Wear the Omnitrix on the left wrist. Unfinished (the dial works in the editor, not yet tried on the
+	 * headset, and nothing comes out when it is slammed), so it is off until it is finished.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Museum|Omnitrix")
+	bool bWearOmnitrix = false;
 
 protected:
 	virtual void BeginPlay() override;
@@ -293,6 +313,9 @@ private:
 	void OnAdjustCompleted(const FInputActionValue& Value);
 	void OnLook(const FInputActionValue& Value);
 	void OnMove(const FInputActionValue& Value);
+	void OnWatch(const FInputActionValue& Value);
+	void OnWatchDial(const FInputActionValue& Value);
+	void OnWatchDialCompleted(const FInputActionValue& Value);
 
 	// Interactor events
 	void HandleSelect(UMuseumHandInteractor* Hand, bool bPressed);
@@ -374,6 +397,21 @@ private:
 	FAlienPress RightPress;
 	FHandTap LeftTap;
 	FHandTap RightTap;
+
+	/** The Omnitrix on the left wrist (spawned in BeginPlay). */
+	UPROPERTY(Transient)
+	TObjectPtr<AOmnitrixWatch> Watch;
+
+	/** The left trigger went to the watch (a slam): its release goes there too, not to the hand. */
+	bool bLeftSelectToWatch = false;
+
+	void UpdateWatchHands();
+
+	UFUNCTION()
+	void HandleOmnitrixTransform(UAlienDataAsset* Alien);
+
+	UFUNCTION()
+	void HandleOmnitrixRevert(bool bTimedOut);
 	TWeakObjectPtr<AAlienCharacter> TargetedAlien[2];
 	bool bTwoHandAlien = false;
 	float TwoHandAlienStartDistance = 1.f;

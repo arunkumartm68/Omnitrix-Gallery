@@ -14,7 +14,14 @@ Parameter names match MuseumAssets::Params in the C++ code. Re-running rebuilds 
   M_EnvWater     translucent shimmering water
   M_EnvMist      soft translucent mist puffs (edges fade out)
   M_FXRing       glowing ring on the engine Plane (shockwaves, sonic rings, splashes, impact rings)
+  M_OmnitrixFace the Omnitrix's face, drawn from its UVs: the hourglass, or the dialled alien's silhouette,
+                 a ring of time around it, and a flash (parameters set by AOmnitrixWatch)
+
+Pass material names to rebuild only those, e.g. -script="...create_museum_materials.py M_OmnitrixFace".
 """
+import math
+import sys
+
 import unreal
 
 FOLDER = "/Game/AlienMuseum/Materials"
@@ -250,12 +257,80 @@ def build_fx_ring():
     finish(m)
 
 
-for build in (build_glass, build_fx_glow, build_env_lit, build_env_lava, build_env_water, build_env_mist, build_fx_ring):
-    build()
+def build_omnitrix_face():
+    """The face disc's UVs span 0..1 with the centre at 0.5 (blender_convert_omnitrix.py): U runs along the forearm,
+    V across it towards the side button - up, as the wearer looks at the watch."""
+    m, g = material("M_OmnitrixFace", unreal.BlendMode.BLEND_OPAQUE, unreal.MaterialShadingModel.MSM_UNLIT)
+    color = g.vector("Color", (0.25, 1.0, 0.2))
+    brightness = g.scalar("Brightness", 1.0)
+    mode = g.scalar("Mode", 0.0)                 # 0 the hourglass, 1 the silhouette
+    across = g.scalar("HourglassAcross", 1.0)    # 1: its triangles point across the arm, 0: along it
+    flash = g.scalar("Flash", 0.0)
+    flash_color = g.vector("FlashColor", (1.0, 1.0, 1.0))
+    ring = g.scalar("Ring", 0.0)                 # share of the time ring lit
+    ring_color = g.vector("RingColor", (0.25, 1.0, 0.2))
+
+    def const(value):
+        return g.node(unreal.MaterialExpressionConstant, r=float(value))
+
+    def sub(a, b):
+        return g.op(unreal.MaterialExpressionSubtract, a, b)
+
+    def sharp(expr, gain):  # a crisp 0..1 edge
+        return g.single(unreal.MaterialExpressionSaturate, g.mul(expr, const(gain)))
+
+    def channel(expr, index):  # one component (0 = R/U, 1 = G/V)
+        mask = g.node(unreal.MaterialExpressionComponentMask, r=index == 0, g=index == 1)
+        MEL.connect_material_expressions(expr, "", mask, "")
+        return mask
+
+    uv = g.node(unreal.MaterialExpressionTextureCoordinate)
+    centre = g.node(unreal.MaterialExpressionConstant2Vector, r=0.5, g=0.5)
+    p = g.mul(sub(uv, centre), const(2.0))                                     # -1..1 across the disc
+    r = g.mul(g.op(unreal.MaterialExpressionDistance, uv, centre), const(2.0))  # 0 centre .. 1 rim
+    pu, pv = channel(p, 0), channel(p, 1)
+    au, av = g.single(unreal.MaterialExpressionAbs, pu), g.single(unreal.MaterialExpressionAbs, pv)
+
+    disc = sharp(sub(const(0.97), r), 40.0)
+    inner = sharp(sub(const(0.8), r), 40.0)
+    # The hourglass: two triangles meeting at the centre, inside the inner circle.
+    hourglass = g.mul(g.lerp(sharp(sub(g.mul(au, const(0.92)), av), 25.0), sharp(sub(g.mul(av, const(0.92)), au), 25.0), across), inner)
+    # The silhouette: black on green. Its image stands upright; the face's V runs up as you look, U the other way.
+    flipped = sub(g.node(unreal.MaterialExpressionConstant2Vector, r=1.0, g=1.0), uv)
+    texture = g.node(unreal.MaterialExpressionTextureSampleParameter2D, parameter_name="Silhouette",
+                     texture=unreal.load_asset("/Engine/EngineResources/Black"))
+    MEL.connect_material_expressions(flipped, "", texture, "UVs")
+    silhouette = g.mul(g.single(unreal.MaterialExpressionOneMinus, channel(texture, 0)), sharp(sub(const(0.86), r), 40.0))
+    lit = g.mul(g.mul(color, brightness), g.lerp(hourglass, silhouette, mode))
+    # The ring of time around the edge, clockwise from the top.
+    angle = g.node(unreal.MaterialExpressionArctangent2)
+    MEL.connect_material_expressions(pu, "", angle, "Y")
+    MEL.connect_material_expressions(pv, "", angle, "X")
+    turn = g.add(g.mul(angle, const(1.0 / (2.0 * math.pi))), const(0.5))
+    band = g.mul(sharp(sub(r, const(0.85)), 40.0), sharp(sub(const(0.94), r), 40.0))
+    ring_lit = g.mul(g.mul(ring_color, const(1.4)), g.mul(band, sharp(sub(ring, turn), 200.0)))
+    glow = g.add(g.add(lit, ring_lit), g.add(g.mul(g.mul(flash_color, flash), const(3.0)), const(0.015)))
+    g.out(g.mul(glow, disc), unreal.MaterialProperty.MP_EMISSIVE_COLOR)
+    finish(m)
+
+
+BUILDS = {
+    "M_MuseumGlass": build_glass,
+    "M_FXGlow": build_fx_glow,
+    "M_EnvLit": build_env_lit,
+    "M_EnvLava": build_env_lava,
+    "M_EnvWater": build_env_water,
+    "M_EnvMist": build_env_mist,
+    "M_FXRing": build_fx_ring,
+    "M_OmnitrixFace": build_omnitrix_face,
+}
+WANTED = [name for name in sys.argv[1:] if name in BUILDS] or list(BUILDS)
+for name in WANTED:
+    BUILDS[name]()
 
 # The existing emissive material is now also used on instanced habitat props.
 emissive = unreal.load_asset(f"{FOLDER}/M_MuseumEmissive")
-if emissive and not emissive.get_editor_property("used_with_instanced_static_meshes"):
+if len(WANTED) == len(BUILDS) and emissive and not emissive.get_editor_property("used_with_instanced_static_meshes"):
     emissive.set_editor_property("used_with_instanced_static_meshes", True)
     MEL.recompile_material(emissive)
     EAL.save_loaded_asset(emissive)
