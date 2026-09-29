@@ -597,6 +597,14 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Actions")
 	bool bHeadFlames = false;
 
+	/** The Vines move's vines: Wildvine's green stems, Benmummy's bandages. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Actions")
+	FLinearColor VineColor = FLinearColor(0.12f, 0.45f, 0.08f);
+
+	/** The Vines move ends with an exploding seed pod (Wildvine - not Benmummy's bandages). */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Actions")
+	bool bVineSeedPod = true;
+
 	/** Leaves glowing after-images whenever it runs fast (XLR8). Needs an imported model. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Actions")
 	bool bSpeedTrail = false;

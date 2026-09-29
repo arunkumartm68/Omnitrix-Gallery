@@ -210,12 +210,15 @@ When an alien moves in, its case gets the alien's home world (`UAlienDataAsset::
 * **Ambient effect** – embers, bubbles, mist, sparkles, spores / dust or tech pulses.
 
 Props are placed at random but the same way every time for a case, never on top of the alien, and are
-rebuilt to fit when the case is resized. The 16 worlds: Khoros (Four Arms), Kinet race track (XLR8),
+rebuilt to fit when the case is resized. The 20 worlds: Khoros (Four Arms), Kinet race track (XLR8),
 Petropia (Diamondhead), Galvan B (Upgrade), Anur Phaetos graveyard (Ghostfreak), Piscciss ocean floor
 (Ripjaws), Vulpin (Wildmutt), Galvan Prime lab (Grey Matter), Arburia (Cannonbolt), Flors Verdance
 (Wildvine), Peptor XI (Upchuck), clone playground (Ditto), Sonorosia (Echo Echo), Pyros lava field
 (Heatblast), Lepidopterra swamp (Stinkfly), Luna Lobo moonscape (Benwolf: jagged moon rocks, dead
-trees, bones, a moon-glow stone and mist).
+trees, bones, a moon-glow stone and mist), Anur Khufos tomb sands (Benmummy: pyramids, obelisks, a
+sarcophagus), Anur Transyl storm peaks (Benvicktor: crags, lightning rods, charged orbs, gravestones),
+Sightra eye marsh (Eye Guy: glowing eye pods on swaying stalks) and the Nosedeen power grid (Buzzshock:
+battery cells and live terminals).
 
 Physics rules that keep it stable: loose props *overlap* the alien (its movement component's repulsion
 force shoves them away) instead of blocking it, so a prop can never wedge the alien into the glass; the
@@ -231,7 +234,7 @@ you walk up to its glass. Moves follow the cartoon:
 |---|---|
 | Cannonbolt | **Roll** – curls up into his armoured ball (the Wii model's ball form), rolls fast, bounces off the glass, bowls props over |
 | XLR8 | **Dash** – super-speed zig-zag with blue after-images and speed streaks; also leaves after-images whenever he runs fast, and walks at 70 cm/s |
-| Heatblast | **Flare** – his head is always on fire (flickering flames + embers); flames surge and a fireball hits the glass (classic collection only - he is no longer in the museum) |
+| Heatblast | **Flare** – his head is always on fire (flickering flames + embers); flames surge and a fireball hits the glass |
 | Four Arms | **Flex** – turns to you, strikes a double-biceps pose with all four arms, pumps (power rings), then stomps a shockwave that makes the props jump; also **Pounce** |
 | Diamondhead | **Crystal burst** – crystal spikes burst out of the ground around him |
 | Ghostfreak | **Phase** – fades into mist, drifts unseen through everything, reappears |
@@ -244,6 +247,10 @@ you walk up to its glass. Moves follow the cartoon:
 | Grey Matter | **Scurry** – tiny quick zig-zag dashes with hops |
 | Stinkfly | **Fly** – takes off, circles the case banking into the turns, lands. His wings are separate meshes that buzz while he hovers and beat in big fast strokes when he flies, moves or is held |
 | Benwolf | **Howl** – turns to you, winds up, his muzzle splits open into four and sonic rings pour out at the glass, pushing the props away (his model's own howl animations); also **Pounce** |
+| Benmummy | **Vines** as bandages – pale bandages lash out to the glass and pull back (`VineColor`, no seed pod: `bVineSeedPod`) |
+| Benvicktor | **Flex** in lightning blue – charges up with crackling power rings, then stomps |
+| Buzzshock | **Clone** – splits into copies of himself (Nosedeenians multiply); **Dash** – zips about like a spark |
+| Eye Guy | **Flare** without head flames – an energy blast from his eyes hits the glass |
 
 Effects are pooled glowing shapes and rings (`M_FXGlow`, `M_FXRing`, max 40 per alien) that stay inside
 the glass. Models also lean into turns and when speeding up, turn slightly towards what they look at,
@@ -292,6 +299,11 @@ Knock on a case like on an aquarium and its alien answers.
 | Echo Echo | A small sonic ring hits the glass |
 | Diamondhead | A little crystal grows on the glass where you tapped |
 | Wildvine | A vine reaches out and taps back |
+| Heatblast | Presses his burning face to the glass and leaves a glowing scorch mark |
+| Benmummy | A bandage reaches out and taps back |
+| Benvicktor | Punches the glass back |
+| Eye Guy | Studies you, head tilting one way, then the other |
+| Buzzshock | Electric lines race across the glass from the spot |
 
   Annoyed, the others answer with their show-off move (Echo Echo screams, Diamondhead bursts crystals,
   Ghostfreak phases...).
@@ -416,8 +428,9 @@ and FM tones. Random seeds are fixed, so the same files come out every run.
 
 ## Downloaded models (how the Ben 10 aliens got in)
 
-The 21 alien downloads (Sketchfab zips: FBX, OBJ, glTF, `.blend`, one `.rar`, a Wii game rip of
-Cannonbolt with his ball form, and Benwolf's game model with its animations) go through these scripts,
+The 26 alien downloads (Sketchfab zips: FBX, OBJ, glTF, `.blend`, one `.rar`, a Wii game rip of
+Cannonbolt with his ball form, Benwolf's game model with its animations, and five rigged T-pose
+models: Heatblast, Benvicktor, Eye Guy, Buzzshock, Benmummy - some zips hold a second zip) go through these scripts,
 in this order:
 
 1. **Blender 5.2** – `Scripts/blender_convert_models.py` (settings per download in its `MODELS` table):
@@ -435,7 +448,8 @@ in this order:
    get skinned to it, unused tip bones are dropped, and `<Id>_Rig.glb` (skinned) is written next to the
    static `<Id>.glb`. Animated models (`animated`: Benwolf, a game model with 15 hand-made takes) keep
    their rest pose and the takes listed in `clips` (renamed to the game's clip names and exported with
-   `<Id>_Rig.glb`); `drop` removes a duplicate body, `bind` skins loose eyes and teeth to the bones that
+   `<Id>_Rig.glb`); `drop` (any model) leaves objects out - a duplicate body, Buzzshock's blend-shape
+   leftovers (`Pose_*`), Benmummy's bandage ribbons that hung below his feet - `bind` skins loose eyes and teeth to the bones that
    move the skin around them (his four-way split jaw), `reduce` thins needlessly dense parts, a mesh
    scale the game export left under the rig is undone (else every joint sits outside the body), and the
    static `<Id>.glb` shows the `still` frame.
@@ -536,8 +550,7 @@ Resonance renders all sources into one third-order ambisonic mix decoded once fo
   the run blended over his hunched idle.
 * Four Arms (2), Cannonbolt (2), Cannonbolt (3) and Upgrade (2) were taken out of the museum (`RETIRED`).
   A saved case that held one of them comes back empty.
-* Heatblast was taken out of the museum (no model was downloaded for him). A saved case that held him
-  comes back empty; remove it with its red X or put another alien in. His head flames would attach to a
-  future Heatblast model automatically.
+* Heatblast, Benmummy, Benvicktor, Buzzshock and Eye Guy have no voices or footsteps of their own (their
+  moves still play the shared move sounds).
 * In a small case a wide alien (e.g. Cannonbolt, 50 cm across) has little room to roll or leap - make
   the case bigger with the handles.

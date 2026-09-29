@@ -48,6 +48,7 @@ MAX_SPAN = 56.0         # cm: widest pose that still fits the default chamber wi
 #      end), target = where the end bone's joint goes, pole = where the middle joint bends towards
 #      (both in height units from the model's centre / floor), aim = direction the end bone points,
 #      aim_bones = other bones of the limb (a thumb) -> the direction they point.
+# drop = objects left out of the model: a name, or a prefix ending in * (blend-shape leftovers, ribbons).
 # rigged = also export the skinned model (<Id>_Rig.glb) with the pose above as its rest pose.
 # animated = the model's own animations: clips = game clip name -> the file's take; still = (clip,
 #            frame) for the static model; drop = objects left out; bind = unskinned object -> bones
@@ -121,6 +122,23 @@ MODELS = {
                                  "HowlStart": "SpecialStart", "HowlLoop": "SpecialLoop", "Howl": "Special_Lobisben",
                                  "Hit": "TakeDamage_Lobisben", "Attack": "Heavy_01_Lobisben"},
                           still=("Idle", 1)),
+    # The classic series' Heatblast: a low-poly Pyronite in a T-pose, arms lowered. His head flames are the
+    # game's own effect (create_habitats_and_moves.py), not part of the model.
+    "heatblast-ben-10": dict(id="Heatblast", alien="Heatblast", height=55, pose={"Left arm": 70, "Right arm": 70}),
+    # Benvicktor, the classic series' Frankenstein monster (later Frankenstrike): a Mixamo rig in a T-pose.
+    "ben-viktor-frankenstrike": dict(id="Benvicktor", alien="Benvicktor", height=66,
+                                     pose={"mixamorig_LeftArm": 70, "mixamorig_RightArm": 70}),
+    # Eye Guy (Mega Olhos): Mixamo rig, arms a little below a T-pose; dense, so it is reduced to the budget.
+    "eye-guy-mega-olhos-olhudo-ben10": dict(id="EyeGuy", alien="Eye Guy", height=60,
+                                            pose={"mixamorig_LeftArm": 62, "mixamorig_RightArm": 62}),
+    # Buzzshock (Chocante): the file also holds its blend shapes as separate, 100x oversized meshes (Pose_*,
+    # under Poses__* empties) - they are not part of him.
+    "chocante-e-megawatt-buzzshock-and-megawatt": dict(id="Buzzshock", alien="Buzzshock", height=26,
+                                                       drop=["Pose_*", "Poses_*"], pose={"Braço": 60, "Braço_2": 60}),
+    # Benmummy (Snare-oh): two long bandage ribbons (Faixas) hang from his arms to below his feet, which would
+    # lift him off the ground; they are left out - his bandages lash out in his move instead.
+    "ben-mumia-benmummy-snare-oh-ben-10": dict(id="Benmummy", alien="Benmummy", height=60, drop=["Faixas"],
+                                               pose={"Braco": 70, "Braco_2": 70}),
 }
 
 
@@ -944,6 +962,14 @@ def export_glb(path, objects=None, skinned=False, animations=False):
     bpy.ops.export_scene.gltf(**kwargs)
 
 
+def drop_objects(names):
+    """Removes objects that are not part of the character: exact names, or prefixes ending in '*'."""
+    for obj in list(bpy.data.objects):
+        if obj.name in bpy.data.objects and any(obj.name == n or (n.endswith("*") and obj.name.startswith(n[:-1])) for n in names):
+            print("  dropped", obj.name)
+            bpy.data.objects.remove(obj, do_unlink=True)
+
+
 def convert(folder_name, cfg, downloads, out_dir):
     folder_name = cfg.get("folder", folder_name)
     folder = os.path.join(downloads, folder_name)
@@ -953,6 +979,7 @@ def convert(folder_name, cfg, downloads, out_dir):
     common.relink_missing_images(folder)
     fix_materials(cfg, folder)
 
+    drop_objects(cfg.get("drop", []))
     apply_rotation(cfg.get("rotate"))
     if cfg.get("animated"):
         static, rig_glb, triangles, bones, clips = finish_animated(cfg, out_dir)

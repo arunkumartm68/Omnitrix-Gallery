@@ -242,6 +242,9 @@ private:
 	float LastYaw = 0.f;
 	bool bGhostMode = false;
 
+	FLinearColor VineColor = FLinearColor(0.12f, 0.45f, 0.08f);
+	bool bVineSeedPod = true;
+
 	// ---- answering a tap on the glass ----
 	EAlienTapStyle TapStyle = EAlienTapStyle::Curious;
 	EGlassMood GlassMood = EGlassMood::Curious;

@@ -100,6 +100,8 @@ void UAlienActionComponent::Setup(const UAlienDataAsset* Data)
 	bSpeedTrail = Data->bSpeedTrail;
 	bHovers = Data->bHovers;
 	TapStyle = Data->TapStyle;
+	VineColor = Data->VineColor;
+	bVineSeedPod = Data->bVineSeedPod;
 	if (Data->bHeadFlames)
 	{
 		BuildFlames();
@@ -1462,7 +1464,8 @@ void UAlienActionComponent::TickGlassReact(float Dt)
 					HitGlass(TargetPoint, 0.15f);
 					if (bSmear)
 					{
-						Case->MarkGlass(TargetPoint, GlassNormal, H * 0.32f, FLinearColor(0.55f, 1.f, 0.12f), 9.f, 0.6f);
+						// Upchuck's slime, Heatblast's scorch: in the colour of its effects.
+						Case->MarkGlass(TargetPoint, GlassNormal, H * 0.32f, FMath::Lerp(ActionColor, FLinearColor::White, 0.15f), 9.f, 0.6f);
 					}
 				}
 				Voice(EAlienVoice::Call, 0.8f); // a whisper, a laugh; a gurgle
@@ -2044,7 +2047,7 @@ void UAlienActionComponent::TickPounce(float Dt)
 }
 
 // ---------------------------------------------------------------------------------------------
-// Vines (Wildvine): vines lash out to the glass, and an exploding seed pod is thrown
+// Vines (Wildvine; Benmummy's bandages): vines lash out to the glass, and an exploding seed pod is thrown
 // ---------------------------------------------------------------------------------------------
 
 void UAlienActionComponent::TickVines(float Dt)
@@ -2099,7 +2102,7 @@ void UAlienActionComponent::TickVines(float Dt)
 	}
 	case 2: // hold and sway; throw a seed pod
 		UpdateVines(1.f);
-		if (Counter == 0 && StepTime >= 0.3f)
+		if (bVineSeedPod && Counter == 0 && StepTime >= 0.3f)
 		{
 			Counter = 1;
 			const FVector Throw = RandomFlat(Rng) * Rng.FRandRange(40.f, 80.f) * S + FVector(0.f, 0.f, 170.f * S);
@@ -3189,7 +3192,7 @@ void UAlienActionComponent::EnsureVines()
 	{
 		return;
 	}
-	UMaterialInstanceDynamic* Stem = MakeLitMaterial(FLinearColor(0.12f, 0.45f, 0.08f), 0.6f, 0.1f);
+	UMaterialInstanceDynamic* Stem = MakeLitMaterial(VineColor, 0.6f, 0.1f);
 	UMaterialInstanceDynamic* Bud = MakeLitMaterial(ActionColor, 0.5f, 0.3f);
 	for (int32 i = 0; i < 4; ++i)
 	{

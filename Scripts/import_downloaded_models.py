@@ -36,9 +36,10 @@ CLASSIC_FOLDER = "/Game/AlienMuseum/Data/Classic"
 COLLECTION_NAME = "DA_AlienCollection_Models"
 
 # Collection order (the first one fills the starter chamber on a fresh install).
-ORDER = ["FourArms_1", "XLR8_1", "XLR8_2", "Diamondhead_1", "Diamondhead_2",
+ORDER = ["FourArms_1", "Heatblast", "XLR8_1", "XLR8_2", "Diamondhead_1", "Diamondhead_2",
          "Upgrade_1", "Ghostfreak", "Ripjaws", "Wildmutt", "GreyMatter",
-         "Cannonbolt_1", "Wildvine", "Upchuck", "Ditto", "EchoEcho", "Stinkfly", "Benwolf"]
+         "Cannonbolt_1", "Wildvine", "Upchuck", "Ditto", "EchoEcho", "Stinkfly", "Benwolf",
+         "Benmummy", "Benvicktor", "Buzzshock", "EyeGuy"]
 
 # Taken out of the museum by the owner (the downloads stay in SourceArt; add an id back to ORDER to
 # bring it back). Their imported assets are deleted, so they are not cooked into the app.
@@ -49,6 +50,7 @@ CLASSIC_ASSETS = {
     "Four Arms": "DA_Classic_FourArms", "XLR8": "DA_Classic_XLR8", "Diamondhead": "DA_Classic_Diamondhead",
     "Upgrade": "DA_Classic_Upgrade", "Ghostfreak": "DA_Classic_Ghostfreak", "Ripjaws": "DA_Classic_Ripjaws",
     "Wildmutt": "DA_Classic_Wildmutt", "Grey Matter": "DA_Classic_GreyMatter", "Stinkfly": "DA_Classic_Stinkfly",
+    "Heatblast": "DA_Classic_Heatblast",
 }
 
 # Aliens without a classic data asset.
@@ -67,6 +69,18 @@ EXTRA = {
     "Benwolf": dict(species="Loboan", planet="Luna Lobo, moon of Anur Transyl", chamber=(0.45, 0.6, 1.0),
                     desc="His muzzle splits into four to unleash a sonic howl. Sees in the dark and hunts by scent, "
                          "but loud noises hurt his ears."),
+    # Benwolf's two Halloween companions from the classic series (later called Snare-oh and Frankenstrike).
+    "Benmummy": dict(species="Thep Khufan", planet="Anur Khufos", chamber=(1.0, 0.8, 0.4),
+                     desc="A living mummy (later known as Snare-oh): his bandages stretch out to grab and tie up "
+                          "anything, and he can pull himself apart and back together."),
+    "Benvicktor": dict(species="Transylian", planet="Anur Transyl", chamber=(0.45, 0.85, 1.0),
+                       desc="A towering Frankenstein monster (later known as Frankenstrike): the bolts on his shoulders "
+                            "store lightning that he hurls as electric blasts."),
+    "Buzzshock": dict(species="Nosedeenian", planet="Nosedeen", chamber=(0.3, 1.0, 0.45),
+                      desc="A living battery: he zips through anything electrical as pure lightning and multiplies "
+                           "into more of himself."),
+    "Eye Guy": dict(species="Opticoid", planet="Sightra", chamber=(0.85, 1.0, 0.3),
+                    desc="Covered in eyes that see in every direction at once - and every one of them fires an energy beam."),
 }
 
 HOVERS = {"Ghostfreak", "Stinkfly"}

@@ -18,7 +18,9 @@ Moves follow what the aliens do in Ben 10 (Cartoon Network): Cannonbolt rolls in
 at super speed, Heatblast is on fire, Four Arms shows off his strength, Diamondhead grows crystals,
 Ghostfreak phases, Echo Echo screams and splits, Ditto clones, Upchuck eats and spits, Wildmutt and
 Ripjaws pounce, Wildvine lashes vines and seed bombs, Upgrade melts into machines, Grey Matter
-scurries, Stinkfly flies, Benwolf howls with his four-way jaw. Private fan project - not for publishing.
+scurries, Stinkfly flies, Benwolf howls with his four-way jaw, Benmummy's bandages lash out, Benvicktor
+charges up with lightning, Buzzshock multiplies and zips, Eye Guy fires from his eyes.
+Private fan project - not for publishing.
 """
 import os
 import sys
@@ -158,6 +160,33 @@ HABITATS = {
         prop(S.CYLINDER, (0.90, 0.87, 0.78), 3, (1.5, 2), (1, 1, 5), tilt=60, physics=True),               # bones
         prop(S.SPHERE, (0.25, 0.26, 0.32), 3, (3, 5), (1.2, 1, 0.8), physics=True),                        # moon pebbles
     ]),
+    # Benvicktor's home: the Transylians' stormy world of crags and lightning rods.
+    "AnurTransyl": ("Anur Transyl storm peaks", G.ROCK, (0.10, 0.09, 0.12), (0.4, 0.8, 1.0), 1.0, A.PULSES, (0.5, 0.85, 1.0), 10, [
+        prop(S.CONE, (0.14, 0.12, 0.17), 4, (6, 9), (1, 1, 2.2), P.EDGES, tilt=8, blocks=True),             # jagged crags
+        prop(S.CYLINDER, (0.28, 0.25, 0.22), 2, (2.5, 3.5), (1, 1, 6), P.CORNERS),                           # lightning rods
+        prop(S.SPHERE, (0.5, 0.9, 1.0), 2, (2, 3), place=P.CORNERS, look=L.GLOW),                            # charged orbs
+        prop(S.CUBE, (0.18, 0.18, 0.21), 3, (3, 5), (1, 0.4, 1.6), P.BACK, tilt=6),                          # old gravestones
+        prop(S.SPHERE, (0.20, 0.19, 0.22), 4, (2.5, 4), (1.2, 1, 0.8), physics=True),                        # rubble
+    ]),
+    # Benmummy's home: the Thep Khufans' desert of tombs.
+    "AnurKhufos": ("Anur Khufos tomb sands", G.SAND, (0.72, 0.58, 0.32), (1.0, 0.75, 0.3), 1.5, A.SPORES, (0.95, 0.85, 0.6), 10, [
+        prop(S.CONE, (0.78, 0.63, 0.35), 2, (10, 14), (1, 1, 0.9), P.BACK, blocks=True),                     # pyramids
+        prop(S.CUBE, (0.60, 0.50, 0.30), 2, (3, 4), (1, 1, 5), P.CORNERS),                                   # obelisks
+        prop(S.CUBE, (0.35, 0.28, 0.15), 1, (6, 7), (1.8, 0.8, 0.6), P.EDGES, blocks=True),                  # sarcophagus
+        prop(S.SPHERE, (0.70, 0.58, 0.35), 4, (2.5, 4), (1.2, 1, 0.8), physics=True),                        # sandstone
+    ]),
+    # Eye Guy's home: Sightra, a marsh that watches you back.
+    "Sightra": ("Sightra eye marsh", G.ORGANIC, (0.30, 0.34, 0.12), (0.9, 1.0, 0.3), 1.2, A.SPORES, (0.85, 1.0, 0.4), 12, [
+        prop(S.SPHERE, (0.95, 0.95, 0.85), 5, (2, 4), place=P.EDGES, look=L.GLOW),                           # eye pods
+        prop(S.CYLINDER, (0.35, 0.40, 0.15), 6, (1, 1.5), (1, 1, 12), P.EDGES, sway=True),                   # eye stalks
+        prop(S.SPHERE, (0.30, 0.30, 0.12), 4, (3, 5), (1.2, 1, 0.8), physics=True),                          # mossy stones
+    ]),
+    # Buzzshock's home: Nosedeen, one big humming power grid.
+    "Nosedeen": ("Nosedeen power grid", G.TECH, (0.03, 0.04, 0.05), (0.3, 1.0, 0.5), 1.0, A.PULSES, (0.4, 1.0, 0.6), 14, [
+        prop(S.CYLINDER, (0.08, 0.09, 0.10), 4, (3, 5), (1, 1, 2), P.EDGES, blocks=True),                    # battery cells
+        prop(S.CYLINDER, (0.3, 1.0, 0.5), 4, (2.5, 4), (1, 1, 0.2), look=L.GLOW),                            # live terminals
+        prop(S.CUBE, (0.12, 0.13, 0.15), 3, (3, 4), (1, 1, 0.5), physics=True),                              # loose cells
+    ]),
 }
 
 # Alien -> (habitat, moves (first = show-off), effect colour, chance per idle, extras)
@@ -179,6 +208,15 @@ MOVES = {
     "Stinkfly": ("Lepidopterra", [M.FLY], (0.6, 1.0, 0.3), 0.45, {}),
     # The sonic howl is his show-off move; he prowls a little quicker than the static models walk.
     "Benwolf": ("LunaLobo", [M.HOWL, M.POUNCE], (0.5, 1.0, 0.75), 0.4, {"walk_speed": 45.0, "energy": 0.6}),
+    # A shuffling mummy whose bandages (not vines, no seed pod) lash out to the glass.
+    "Benmummy": ("AnurKhufos", [M.VINES], (0.85, 0.8, 0.62), 0.4,
+                 {"vine_color": (0.78, 0.72, 0.58), "vine_seed_pod": False, "walk_speed": 11.0, "energy": 0.3}),
+    # A lumbering giant: charges up (the power rings in lightning blue) and stomps.
+    "Benvicktor": ("AnurTransyl", [M.FLEX], (0.45, 0.85, 1.0), 0.35, {"walk_speed": 11.0, "energy": 0.3}),
+    # Hyper: multiplies, and zips about like a spark.
+    "Buzzshock": ("Nosedeen", [M.CLONE, M.DASH], (0.45, 1.0, 0.7), 0.5, {"walk_speed": 30.0, "energy": 0.85}),
+    # Fires an energy blast from his eyes at the glass.
+    "EyeGuy": ("Sightra", [M.FLARE], (0.8, 1.0, 0.25), 0.4, {}),
 }
 
 
@@ -208,7 +246,8 @@ def alien_key(asset_name):
 # How each alien answers a tap on its glass (UAlienDataAsset::TapStyle; three taps in a row get its show-off move).
 TAP = {"Wildmutt": "PAW", "Ghostfreak": "FACE", "Benwolf": "GROWL", "FourArms": "BANG", "GreyMatter": "INSPECT",
        "XLR8": "RUSH", "Upgrade": "CIRCUITS", "Stinkfly": "BUMP", "Ripjaws": "SNAP", "Cannonbolt": "ROLL",
-       "Upchuck": "SMEAR", "Ditto": "CLONES", "EchoEcho": "ECHO", "Diamondhead": "CRYSTAL", "Wildvine": "VINE"}
+       "Upchuck": "SMEAR", "Ditto": "CLONES", "EchoEcho": "ECHO", "Diamondhead": "CRYSTAL", "Wildvine": "VINE",
+       "Heatblast": "SMEAR", "Benvicktor": "BANG", "Benmummy": "VINE", "EyeGuy": "INSPECT", "Buzzshock": "CIRCUITS"}
 
 
 def apply_moves(da, habitats, poses, ball_mesh):
@@ -227,6 +266,8 @@ def apply_moves(da, habitats, poses, ball_mesh):
     for prop_name in ("walk_speed", "energy"):
         if prop_name in extras:
             da.set_editor_property(prop_name, extras[prop_name])
+    da.set_editor_property("vine_color", color(extras.get("vine_color", (0.12, 0.45, 0.08))))
+    da.set_editor_property("vine_seed_pod", extras.get("vine_seed_pod", True))
     posed = poses.get(da.get_name().replace("DA_Model_", ""), {})
     if "pose" in posed:
         da.set_editor_property("pose_mesh", posed["pose"][0])
