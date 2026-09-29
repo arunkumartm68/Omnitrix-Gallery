@@ -8,6 +8,8 @@
 #include "Data/AlienDataAsset.h"
 #include "Core/MuseumAssets.h"
 #include "Core/MuseumAudio.h"
+#include "Core/MuseumDirector.h"
+#include "MR/MuseumSceneComponent.h"
 #include "Data/ChamberHabitatAsset.h"
 #include "Ben10.h"
 #include "Components/AudioComponent.h"
@@ -32,6 +34,7 @@ namespace
 	constexpr float FrameInset = 3.f;   // metal rim beyond the glass
 	constexpr float HandleGap = 8.f;    // resize handles float this far outside the frame
 	constexpr float MoveInset = 3.f;    // walkable floor stops this far inside the glass
+	constexpr float MaxAnyScale = 10.f; // no case grows past this, whatever its alien (Four Arms at life size is ~4)
 	constexpr float HandleLingerTime = 0.6f;
 	constexpr float RemoveConfirmTime = 3.f;
 	const FLinearColor RemoveColor(1.f, 0.18f, 0.12f);
@@ -39,6 +42,14 @@ namespace
 	FVector ShapeScale(float SizeX, float SizeY, float SizeZ)
 	{
 		return FVector(SizeX, SizeY, SizeZ) / 100.f; // basic shapes are 100 cm
+	}
+
+	/** The smallest inside (cm at scale 1) for an alien with this capsule radius and height: room to turn round
+	 *  without its limbs touching the glass, and room above its head. */
+	FVector GetMinInnerSize(float CapsuleRadius, float BodyHeight)
+	{
+		const float Across = 2.f * (CapsuleRadius + MoveInset) + 6.f;
+		return FVector(Across, Across, BodyHeight + 8.f);
 	}
 
 	/** Invisible collision that blocks the alien and the habitat's physics props, never the pointer ray. */
@@ -339,8 +350,8 @@ void AAlienChamber::BuildLayout()
 	Glass->SetRelativeLocation(FVector(0.f, 0.f, BaseHeight + GlassHeight * 0.5f));
 	Glass->SetRelativeScale3D(ShapeScale(Inner.X, Inner.Y, GlassHeight));
 
-	TopCap->SetRelativeLocation(FVector(0.f, 0.f, TopZ + 3.f));
-	TopCap->SetRelativeScale3D(ShapeScale(Outer.X, Outer.Y, 6.f));
+	TopCap->SetRelativeLocation(FVector(0.f, 0.f, TopZ + LidHeight * 0.5f));
+	TopCap->SetRelativeScale3D(ShapeScale(Outer.X, Outer.Y, LidHeight));
 
 	LightPanel->SetRelativeLocation(FVector(0.f, 0.f, TopZ - 0.6f));
 	LightPanel->SetRelativeScale3D(ShapeScale(Inner.X - 10.f, Inner.Y - 10.f, 1.f));
@@ -361,15 +372,60 @@ void AAlienChamber::BuildLayout()
 				const float Angle = FMath::DegreesToRadians(45.f + 90.f * i);
 				Corner = FVector2f(FMath::Cos(Angle), FMath::Sin(Angle)) * (Half.X + 1.5f);
 			}
-			FramePillars->AddInstance(FTransform(FQuat::Identity, FVector(Corner.X, Corner.Y, BaseHeight + GlassHeight * 0.5f), ShapeScale(3.f, 3.f, GlassHeight)));
+			FramePillars->AddInstance(FTransform(FQuat::Identity, FVector(Corner.X, Corner.Y, BaseHeight + GlassHeight * 0.5f), ShapeScale(PostThickness, PostThickness, GlassHeight)));
 		}
 	}
+
+	RefreshContainment();
+
+	// Optional obstacles for the alien to walk around.
+	const float Small = FMath::Min(Half.X, Half.Y);
+	ObstacleRock->SetRelativeLocation(FVector(-0.45f * Half.X, 0.42f * Half.Y, BaseHeight + 1.5f));
+	ObstacleRock->SetRelativeScale3D(ShapeScale(0.34f * Small, 0.28f * Small, 0.20f * Small));
+	ObstacleCrystal->SetRelativeLocation(FVector(0.42f * Half.X, -0.45f * Half.Y, BaseHeight + 0.2f * Small));
+	ObstacleCrystal->SetRelativeScale3D(ShapeScale(0.16f * Small, 0.16f * Small, 0.40f * Small));
+	ObstacleRock->SetVisibility(bShowObstacles);
+	ObstacleCrystal->SetVisibility(bShowObstacles);
+	ObstacleRock->SetCollisionEnabled(bShowObstacles ? ECollisionEnabled::QueryAndPhysics : ECollisionEnabled::NoCollision);
+	ObstacleCrystal->SetCollisionEnabled(bShowObstacles ? ECollisionEnabled::QueryAndPhysics : ECollisionEnabled::NoCollision);
+
+	const FVector2f Move = GetMoveHalfLocal();
+	MovementBounds->SetBoxExtent(FVector(Move.X, Move.Y, GlassHeight * 0.5f));
+	MovementBounds->SetRelativeLocation(FVector(0.f, 0.f, BaseHeight + GlassHeight * 0.5f));
+
+	SpawnPoint->SetRelativeLocation(FVector(0.f, 0.f, BaseHeight + 0.5f));
+
+	SelectBox->SetBoxExtent(FVector(Half.X + FrameInset + 2.f, Half.Y + FrameInset + 2.f, (TopZ + LidHeight) * 0.5f + 2.f));
+	SelectBox->SetRelativeLocation(FVector(0.f, 0.f, (TopZ + LidHeight) * 0.5f));
+
+	HoverGlow->SetRelativeLocation(FVector(0.f, 0.f, -0.6f));
+	HoverGlow->SetRelativeScale3D(ShapeScale(Outer.X * 0.8f, Outer.Y * 0.8f, 0.6f));
+
+	InteriorLight->SetRelativeLocation(FVector(0.f, 0.f, TopZ - 8.f));
+	InteriorLight->SetAttenuationRadius(FMath::Max(Half.X, Half.Y) * 2.5f);
+	InteriorLight->SetLightColor(ActiveLightColor);
+	InteriorLight->SetVisibility(bUseRealInteriorLight);
+
+	InfoRoot->SetRelativeLocation(FVector(0.f, 0.f, TopZ + 30.f)); // clear of the height handle
+
+	LayoutResizeHandles(Half, TopZ);
+}
+
+void AAlienChamber::RefreshContainment()
+{
+	const bool bBox = Shape == EChamberShape::Square;
+	const FVector2f Half = GetInnerHalfLocal();
+	const float TopZ = BaseHeight + GlassHeight;
 
 	// Invisible walls just inside the glass: one per side of the box, an octagon for a round pod. They
 	// are thick and grow outwards from the same inner face: a body pushed into a thin wall can be
 	// resolved out through its far side, a thick one always pushes it back into the case.
+	// A wide alien's capsule (a ball, see AAlienCharacter::GetCapsuleOverhang) can stand taller than the glass: they
+	// reach above the lid by that much, so the case only has to fit the alien itself.
 	constexpr float WallHalfThickness = 6.f;
 	const int32 ActiveWalls = bBox ? 4 : NumWalls;
+	const float Overhang = Occupant ? Occupant->GetCapsuleOverhang() : 0.f;
+	const float WallHeight = GlassHeight + Overhang;
 	for (int32 i = 0; i < ContainmentWalls.Num(); ++i)
 	{
 		UBoxComponent* Wall = ContainmentWalls[i];
@@ -395,44 +451,12 @@ void AAlienChamber::BuildLayout()
 			HalfLength = (InnerApothem + 2.f * WallHalfThickness) * FMath::Tan(FMath::DegreesToRadians(180.f / NumWalls)) + 1.f;
 		}
 		const float Angle = FMath::DegreesToRadians(AngleDeg);
-		Wall->SetBoxExtent(FVector(WallHalfThickness, HalfLength, GlassHeight * 0.5f));
-		Wall->SetRelativeLocation(FVector(FMath::Cos(Angle) * Apothem, FMath::Sin(Angle) * Apothem, BaseHeight + GlassHeight * 0.5f));
+		Wall->SetBoxExtent(FVector(WallHalfThickness, HalfLength, WallHeight * 0.5f));
+		Wall->SetRelativeLocation(FVector(FMath::Cos(Angle) * Apothem, FMath::Sin(Angle) * Apothem, BaseHeight + WallHeight * 0.5f));
 		Wall->SetRelativeRotation(FRotator(0.f, AngleDeg, 0.f));
 	}
 	Ceiling->SetBoxExtent(FVector(Half.X, Half.Y, WallHalfThickness));
-	Ceiling->SetRelativeLocation(FVector(0.f, 0.f, TopZ - 1.f + WallHalfThickness)); // inner face 1 cm under the lid
-
-	// Optional obstacles for the alien to walk around.
-	const float Small = FMath::Min(Half.X, Half.Y);
-	ObstacleRock->SetRelativeLocation(FVector(-0.45f * Half.X, 0.42f * Half.Y, BaseHeight + 1.5f));
-	ObstacleRock->SetRelativeScale3D(ShapeScale(0.34f * Small, 0.28f * Small, 0.20f * Small));
-	ObstacleCrystal->SetRelativeLocation(FVector(0.42f * Half.X, -0.45f * Half.Y, BaseHeight + 0.2f * Small));
-	ObstacleCrystal->SetRelativeScale3D(ShapeScale(0.16f * Small, 0.16f * Small, 0.40f * Small));
-	ObstacleRock->SetVisibility(bShowObstacles);
-	ObstacleCrystal->SetVisibility(bShowObstacles);
-	ObstacleRock->SetCollisionEnabled(bShowObstacles ? ECollisionEnabled::QueryAndPhysics : ECollisionEnabled::NoCollision);
-	ObstacleCrystal->SetCollisionEnabled(bShowObstacles ? ECollisionEnabled::QueryAndPhysics : ECollisionEnabled::NoCollision);
-
-	const FVector2f Move = GetMoveHalfLocal();
-	MovementBounds->SetBoxExtent(FVector(Move.X, Move.Y, GlassHeight * 0.5f));
-	MovementBounds->SetRelativeLocation(FVector(0.f, 0.f, BaseHeight + GlassHeight * 0.5f));
-
-	SpawnPoint->SetRelativeLocation(FVector(0.f, 0.f, BaseHeight + 0.5f));
-
-	SelectBox->SetBoxExtent(FVector(Half.X + FrameInset + 2.f, Half.Y + FrameInset + 2.f, (TopZ + 6.f) * 0.5f + 2.f));
-	SelectBox->SetRelativeLocation(FVector(0.f, 0.f, (TopZ + 6.f) * 0.5f));
-
-	HoverGlow->SetRelativeLocation(FVector(0.f, 0.f, -0.6f));
-	HoverGlow->SetRelativeScale3D(ShapeScale(Outer.X * 0.8f, Outer.Y * 0.8f, 0.6f));
-
-	InteriorLight->SetRelativeLocation(FVector(0.f, 0.f, TopZ - 8.f));
-	InteriorLight->SetAttenuationRadius(FMath::Max(Half.X, Half.Y) * 2.5f);
-	InteriorLight->SetLightColor(ActiveLightColor);
-	InteriorLight->SetVisibility(bUseRealInteriorLight);
-
-	InfoRoot->SetRelativeLocation(FVector(0.f, 0.f, TopZ + 30.f)); // clear of the height handle
-
-	LayoutResizeHandles(Half, TopZ);
+	Ceiling->SetRelativeLocation(FVector(0.f, 0.f, TopZ - 1.f + Overhang + WallHalfThickness)); // inner face 1 cm under the lid (+ overhang)
 }
 
 void AAlienChamber::LayoutResizeHandles(const FVector2f& Half, float TopZ)
@@ -827,6 +851,11 @@ float AAlienChamber::GetFloorZ() const
 	return GetActorTransform().TransformPosition(FVector(0.f, 0.f, WalkZ)).Z;
 }
 
+float AAlienChamber::GetLidZ() const
+{
+	return GetActorTransform().TransformPosition(FVector(0.f, 0.f, BaseHeight + GlassHeight)).Z;
+}
+
 FVector2D AAlienChamber::GetWalkHalfSize() const
 {
 	return FVector2D(GetMoveHalfLocal());
@@ -982,7 +1011,8 @@ void AAlienChamber::TapGlass(const FVector& WorldPoint, float Strength)
 		OnGlass = WorldPoint;
 		Normal = (WorldPoint - GetActorLocation()).GetSafeNormal2D();
 	}
-	RippleGlass(OnGlass, Normal, 0.35f + 0.65f * Strength, FMath::Lerp(ActiveLightColor, FLinearColor::White, 0.55f));
+	RippleGlass(OnGlass, Normal, 0.35f + 0.65f * Strength, FMath::Lerp(ActiveLightColor, FLinearColor::White, 0.55f),
+		FMath::Clamp(1.f / GetChamberScale(), 0.2f, 1.f)); // a knock ripples hand-sized, however big the case
 	if (UMuseumAudio* Audio = UMuseumAudio::Get(this))
 	{
 		// The glass itself rings: heard as it is, never muffled.
@@ -1043,7 +1073,7 @@ int32 AAlienChamber::GetGlassEffectSlot(bool bMark)
 	return GlassEffects.Add(Effect);
 }
 
-void AAlienChamber::RippleGlass(const FVector& WorldPoint, const FVector& Normal, float Strength, const FLinearColor& Color)
+void AAlienChamber::RippleGlass(const FVector& WorldPoint, const FVector& Normal, float Strength, const FLinearColor& Color, float SizeScale)
 {
 	const FTransform& T = GetActorTransform();
 	const float Scale = GetChamberScale();
@@ -1061,8 +1091,8 @@ void AAlienChamber::RippleGlass(const FVector& WorldPoint, const FVector& Normal
 		Effect.Age = 0.f;
 		Effect.Delay = 0.09f * Ring;
 		Effect.Life = 0.55f + 0.15f * Strength;
-		Effect.Size0 = 2.f;
-		Effect.Size1 = (8.f + 26.f * Strength) * (1.f - 0.22f * Ring);
+		Effect.Size0 = 2.f * SizeScale;
+		Effect.Size1 = (8.f + 26.f * Strength) * (1.f - 0.22f * Ring) * SizeScale;
 		Effect.Opacity = (0.45f + 0.4f * Strength) * (1.f - 0.25f * Ring);
 		if (UMaterialInstanceDynamic* MID = GlassEffectMIDs[Slot])
 		{
@@ -1161,7 +1191,7 @@ void AAlienChamber::KeepHabitatClearOfOccupant()
 FVector AAlienChamber::GetOuterSize() const
 {
 	const FVector2f Half = GetInnerHalfLocal();
-	return FVector(2.f * (Half.X + FrameInset), 2.f * (Half.Y + FrameInset), BaseHeight + GlassHeight + 6.f) * GetChamberScale();
+	return FVector(2.f * (Half.X + FrameInset), 2.f * (Half.Y + FrameInset), BaseHeight + GlassHeight + LidHeight) * GetChamberScale();
 }
 
 FVector2D AAlienChamber::GetFootprintHalfSize() const
@@ -1177,7 +1207,7 @@ float AAlienChamber::GetOuterRadius() const
 
 float AAlienChamber::GetTotalHeight() const
 {
-	return (BaseHeight + GlassHeight + 6.f) * GetChamberScale();
+	return (BaseHeight + GlassHeight + LidHeight) * GetChamberScale();
 }
 
 float AAlienChamber::GetSizeAlong(EChamberResizeAxis Axis) const
@@ -1197,11 +1227,18 @@ float AAlienChamber::GetMinSizeAlong(EChamberResizeAxis Axis) const
 	{
 		return 0.f;
 	}
-	// The alien is scaled together with the chamber, so its unscaled capsule is in chamber space.
+	// The alien is scaled together with the chamber, so its unscaled capsule is in chamber space. Its body has to fit
+	// under the lid, its capsule only under the invisible ceiling (which reaches above a wide alien's lid).
 	const UCapsuleComponent* Capsule = Occupant->GetCapsuleComponent();
-	return Axis == EChamberResizeAxis::Height
-		? 2.f * Capsule->GetUnscaledCapsuleHalfHeight() + 8.f
-		: 2.f * (Capsule->GetUnscaledCapsuleRadius() + MoveInset) + 6.f;
+	const UAlienDataAsset* Data = Occupant->GetAlienData();
+	const FVector Min = GetMinInnerSize(Capsule->GetUnscaledCapsuleRadius(), Data ? Data->Height : 2.f * Capsule->GetUnscaledCapsuleHalfHeight());
+	return Axis == EChamberResizeAxis::Height ? Min.Z : Axis == EChamberResizeAxis::Depth ? Min.X : Min.Y;
+}
+
+FVector AAlienChamber::GetMinInnerSizeFor(const UAlienDataAsset* Data)
+{
+	const FVector2D Capsule = AAlienCharacter::GetCapsuleSizeFor(Data);
+	return Capsule.X > 0.f ? GetMinInnerSize(Capsule.X, Data->Height) : FVector::ZeroVector;
 }
 
 void AAlienChamber::SetSizeAlong(EChamberResizeAxis Axis, float NewSize)
@@ -1418,9 +1455,15 @@ void AAlienChamber::RefreshSizeLabel()
 		: TEXT("HEIGHT");
 	// Real-world centimetres (the uniform exhibit scale included).
 	const float Scale = GetChamberScale();
-	SizeLabel->SetText(FText::FromString(FString::Printf(TEXT("%s %.0f cm\n%.0f x %.0f x %.0f cm"),
+	FString Text = FString::Printf(TEXT("%s %.0f cm\n%.0f x %.0f x %.0f cm"),
 		Name, GetSizeAlong(ResizeAxis) * Scale, Width * Scale,
-		(Shape == EChamberShape::Round ? Width : Depth) * Scale, GlassHeight * Scale)));
+		(Shape == EChamberShape::Round ? Width : Depth) * Scale, GlassHeight * Scale);
+	const float Ratio = GetLifeSizeRatio();
+	if (Ratio > 0.f)
+	{
+		Text += Ratio >= 0.995f && Ratio <= 1.005f ? FString(TEXT("\nLIFE SIZE")) : FString::Printf(TEXT("\n%.0f%% OF LIFE SIZE"), Ratio * 100.f);
+	}
+	SizeLabel->SetText(FText::FromString(Text));
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1434,14 +1477,73 @@ float AAlienChamber::GetChamberScale() const
 
 void AAlienChamber::SetChamberScale(float NewScale)
 {
-	SetActorScale3D(FVector(FMath::Clamp(NewScale, ScaleRange.X, ScaleRange.Y)));
+	// The zoom keeps to GetScaleLimits(); life size may go past ScaleRange (restored before its alien is back).
+	SetActorScale3D(FVector(FMath::Clamp(NewScale, ScaleRange.X, FMath::Max(ScaleRange.Y, MaxAnyScale))));
+	RefreshInfoText();
+}
+
+FVector2D AAlienChamber::GetScaleLimits() const
+{
+	FVector2D Limits = ScaleRange;
+	const float Life = OccupantData && OccupantData->LifeHeight > 0.f ? OccupantData->GetLifeScale() : 0.f;
+	if (Life > Limits.Y)
+	{
+		// Up to life size, but never through the ceiling (the case's height grows in step with its scale).
+		float Top = FMath::Min(Life, MaxAnyScale);
+		if (const AMuseumDirector* Director = AMuseumDirector::Get(this))
+		{
+			if (const UMuseumSceneComponent* Scene = Director->GetScene())
+			{
+				const float Room = Scene->GetCeilingZ() - static_cast<float>(GetActorLocation().Z) - 3.f;
+				Top = FMath::Min(Top, Room / FMath::Max(1.f, BaseHeight + GlassHeight + LidHeight));
+			}
+		}
+		Limits.Y = FMath::Max(Limits.Y, Top);
+	}
+	return Limits;
+}
+
+float AAlienChamber::GetLifeSizeRatio() const
+{
+	return OccupantData && OccupantData->LifeHeight > 0.f ? GetChamberScale() / OccupantData->GetLifeScale() : 0.f;
+}
+
+void AAlienChamber::GetProportionsFor(float Scale, float& OutBase, float& OutLid, float& OutPost) const
+{
+	// As designed while it is small; a big case keeps its plinth, lid and posts slim.
+	const AAlienChamber* Design = GetClass()->GetDefaultObject<AAlienChamber>();
+	const float S = FMath::Max(0.05f, Scale);
+	OutBase = FMath::Min(Design->BaseHeight, MaxBaseThickness / S);
+	OutLid = FMath::Min(Design->LidHeight, MaxLidThickness / S);
+	OutPost = FMath::Min(Design->PostThickness, MaxPostThickness / S);
+}
+
+FVector AAlienChamber::GetOuterSizeAt(const FVector& InnerSize, float Scale) const
+{
+	float Plinth, Lid, Posts;
+	GetProportionsFor(Scale, Plinth, Lid, Posts);
+	const float Across = Shape == EChamberShape::Round ? InnerSize.Y : InnerSize.X;
+	return FVector(Across + 2.f * FrameInset, InnerSize.Y + 2.f * FrameInset, Plinth + InnerSize.Z + Lid) * Scale;
+}
+
+void AAlienChamber::SetProportionsForScale(float Scale)
+{
+	GetProportionsFor(Scale, BaseHeight, LidHeight, PostThickness);
+	BuildLayout();
+}
+
+void AAlienChamber::SetLifeSizeNote(const FString& Note)
+{
+	LifeSizeNote = Note;
+	LifeSizeNoteScale = GetChamberScale();
+	RefreshInfoText();
 }
 
 float AAlienChamber::DistanceToChamber(const FVector& WorldPoint) const
 {
 	const float Scale = GetChamberScale();
 	const FVector Local = GetActorTransform().InverseTransformPosition(WorldPoint);
-	const float TopZ = BaseHeight + GlassHeight + 6.f;
+	const float TopZ = BaseHeight + GlassHeight + LidHeight;
 	const FVector2f Half = GetInnerHalfLocal() + FVector2f(FrameInset);
 	float Radial;
 	if (Shape == EChamberShape::Square)
@@ -1486,7 +1588,8 @@ void AAlienChamber::UpdateGrab(const FVector& TargetLocation, float TargetYaw, f
 {
 	GrabTargetLocation = TargetLocation;
 	GrabTargetYaw = TargetYaw;
-	GrabTargetScale = FMath::Clamp(TargetScale, ScaleRange.X, ScaleRange.Y);
+	const FVector2D Limits = GetScaleLimits();
+	GrabTargetScale = FMath::Clamp(TargetScale, Limits.X, Limits.Y);
 
 	if (!bMovedSinceGrab)
 	{
@@ -1602,6 +1705,24 @@ void AAlienChamber::RefreshInfoText()
 			*OccupantData->Species.ToString(),
 			*OccupantData->HomePlanet.ToString(),
 			*WrapText(OccupantData->Description.ToString(), 44, 3));
+		const float Ratio = GetLifeSizeRatio();
+		if (Ratio > 0.f)
+		{
+			// Its real height, and how big it is here.
+			const float Real = OccupantData->LifeHeight;
+			const FString Height = Real >= 100.f ? FString::Printf(TEXT("%.2f m"), Real / 100.f) : FString::Printf(TEXT("%.0f cm"), Real);
+			if (Ratio >= 0.995f && Ratio <= 1.005f)
+			{
+				Body += FString::Printf(TEXT("\nReal height %s - shown life size"), *Height);
+			}
+			else
+			{
+				// The reason holds for the size it was fitted to; zoomed since, the size is the visitor's choice.
+				const bool bAsFitted = FMath::IsNearlyEqual(GetChamberScale(), LifeSizeNoteScale, 0.005f * LifeSizeNoteScale);
+				const FString Why = LifeSizeNote.IsEmpty() || Ratio > 1.f || !bAsFitted ? FString() : FString::Printf(TEXT(" (%s)"), *LifeSizeNote);
+				Body += FString::Printf(TEXT("\nReal height %s - shown at %.0f%%%s"), *Height, Ratio * 100.f, *Why);
+			}
+		}
 		if (!OccupantData->ModelCredit.IsEmpty())
 		{
 			Body += TEXT("\n") + WrapText(OccupantData->ModelCredit.ToString(), 52, 1);

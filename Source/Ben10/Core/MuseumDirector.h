@@ -79,6 +79,18 @@ public:
 	/** Default object of ChamberClass: size and shape of the chambers that will be spawned. */
 	const AAlienChamber* GetChamberTemplate() const;
 
+	/**
+	 * The case Alien should have at FloorLocation, facing Yaw: its own inside size (CaseSize) and the biggest scale up
+	 * to life size that fits there - under the ceiling, inside the walls, clear of furniture and of other cases
+	 * (Ignore: the case being refitted). OutWhy says what kept it smaller ("the ceiling is too low"). False when not
+	 * even the smallest case fits there.
+	 */
+	bool FitLifeSize(const UAlienDataAsset* Alien, const FVector& FloorLocation, float Yaw, const AAlienChamber* Ignore,
+		FVector& OutInnerSize, float& OutScale, FString* OutWhy = nullptr) const;
+
+	/** Gives Chamber the case Alien should have, life size where the room allows it (before the alien moves in). */
+	void MakeLifeSize(AAlienChamber* Chamber, const UAlienDataAsset* Alien);
+
 	UFUNCTION(BlueprintPure, Category = "Museum")
 	TArray<AAlienChamber*> GetChambers() const;
 

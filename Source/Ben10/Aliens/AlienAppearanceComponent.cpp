@@ -358,6 +358,19 @@ void UAlienAppearanceComponent::BuildAppearance(const UAlienDataAsset* Data)
 	HeadRotation = FRotator::ZeroRotator;
 }
 
+float UAlienAppearanceComponent::GetModelCollisionRadius(const UAlienDataAsset* Data, const UStaticMesh* Mesh)
+{
+	if (!Data || !Mesh)
+	{
+		return 0.f;
+	}
+	// Turned by the fix-up rotation and scaled to the alien's height, as BuildModelBody places it; 90% of its reach
+	// keeps outstretched limbs inside the glass.
+	const FBox Bounds = Mesh->GetBoundingBox().TransformBy(FTransform(Data->ModelRotation.Quaternion()));
+	const FVector Half = Bounds.GetExtent() * (Data->Height / FMath::Max(static_cast<float>(Bounds.Max.Z - Bounds.Min.Z), 0.01f));
+	return 0.9f * FMath::Max(Half.X, Half.Y);
+}
+
 void UAlienAppearanceComponent::BuildModelBody(const UAlienDataAsset* Data, UStaticMesh* Mesh)
 {
 	const float H = Data->Height;
@@ -405,7 +418,7 @@ void UAlienAppearanceComponent::BuildModelBody(const UAlienDataAsset* Data, USta
 	const FVector Half = ModelBounds.GetExtent() * Scale;
 	ModelRadius = FMath::Max(Half.X, Half.Y);
 	ModelFront = Half.X; // the model faces +X after the fix-up
-	CollisionRadius = ModelRadius * 0.9f;       // keeps outstretched limbs inside the glass
+	CollisionRadius = GetModelCollisionRadius(Data, Mesh);
 	ShadowRadius = FMath::Min(ModelRadius, 0.3f * H);
 
 	// A model has no separate head; the pivot only keeps the animation code uniform.

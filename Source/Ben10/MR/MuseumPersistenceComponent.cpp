@@ -40,6 +40,7 @@ UMuseumSaveGame* UMuseumPersistenceComponent::GetSave()
 		{
 			SaveGame = Cast<UMuseumSaveGame>(UGameplayStatics::LoadGameFromSlot(SaveSlotName, 0));
 		}
+		LoadedVersion = SaveGame ? SaveGame->Version : UMuseumSaveGame::LifeSizeVersion;
 		if (!SaveGame)
 		{
 			SaveGame = Cast<UMuseumSaveGame>(UGameplayStatics::CreateSaveGameObject(UMuseumSaveGame::StaticClass()));
@@ -52,8 +53,15 @@ void UMuseumPersistenceComponent::WriteSave()
 {
 	if (UMuseumSaveGame* Save = GetSave())
 	{
+		Save->Version = UMuseumSaveGame::LifeSizeVersion;
 		UGameplayStatics::SaveGameToSlot(Save, SaveSlotName, 0);
 	}
+}
+
+bool UMuseumPersistenceComponent::IsSaveFromBeforeLifeSize()
+{
+	GetSave();
+	return LoadedVersion < UMuseumSaveGame::LifeSizeVersion;
 }
 
 FMuseumChamberRecord* UMuseumPersistenceComponent::FindRecord(const FGuid& ChamberId)

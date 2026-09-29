@@ -135,6 +135,9 @@ public:
 	/** World Z of the surface the alien walks on (the habitat ground, if any). */
 	float GetFloorZ() const;
 
+	/** World Z of the top of the glass (the underside of the lid). */
+	float GetLidZ() const;
+
 	/** Half size of the walkable floor in chamber space (cm at scale 1; X = depth, Y = width, a round pod uses its radius). */
 	FVector2D GetWalkHalfSize() const;
 
@@ -232,7 +235,7 @@ public:
 	bool GetGlassWallDistance(const FVector& WorldPoint, float& OutDistance, FVector& OutNormal, FVector& OutOnGlass) const;
 
 	/** Rings spreading over the glass from a point: a tap from outside, an alien banging it from inside. */
-	void RippleGlass(const FVector& WorldPoint, const FVector& Normal, float Strength, const FLinearColor& Color);
+	void RippleGlass(const FVector& WorldPoint, const FVector& Normal, float Strength, const FLinearColor& Color, float SizeScale = 1.f);
 
 	/** A mark on the inside of the glass that fades away (Upchuck's smear, Benwolf's breath). */
 	void MarkGlass(const FVector& WorldPoint, const FVector& Normal, float Size, const FLinearColor& Color, float Life, float Opacity = 0.5f);
@@ -257,6 +260,34 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category = "Chamber|Grab")
 	void SetChamberScale(float NewScale);
+
+	/** How far the zoom may scale the case: ScaleRange, stretched up to its alien's life size (never through the ceiling). */
+	UFUNCTION(BlueprintPure, Category = "Chamber|Size")
+	FVector2D GetScaleLimits() const;
+
+	/** Its alien's size now against its real height (1 = life size; 0 = no alien, or its real height is not known). */
+	UFUNCTION(BlueprintPure, Category = "Chamber|Size")
+	float GetLifeSizeRatio() const;
+
+	/** World size (X depth, Y width, Z height) this case would have with that inside size at that scale - with the
+	 *  slim plinth, lid and posts SetProportionsForScale gives a big case. */
+	FVector GetOuterSizeAt(const FVector& InnerSize, float Scale) const;
+
+	/** The smallest inside (cm at scale 1) that holds this alien, with room to turn round - what the case grows to
+	 *  when it moves in. Zero where only its spawned body can tell (a shape-built alien). */
+	static FVector GetMinInnerSizeFor(const UAlienDataAsset* Data);
+
+	/** Places the invisible walls and ceiling that keep the alien in, for its capsule as it is now: a wide alien's
+	 *  reaches above the lid, and curled into a ball it stops at the lid. Call after changing the occupant's capsule. */
+	void RefreshContainment();
+
+	/** Plinth, lid and posts for that scale: as designed for a small case, at most MaxBase/Lid/PostThickness real cm
+	 *  for a big one. Set before the occupant moves in (the layout is rebuilt). */
+	void SetProportionsForScale(float Scale);
+
+	/** Why its alien is shown smaller than life size ("the ceiling is too low"), at the size it has now; empty when it
+	 *  is life size. Shown until the case is zoomed to another size. */
+	void SetLifeSizeNote(const FString& Note);
 
 	/** Distance from a world point to the chamber shell (0 when inside). Used for "near grab". */
 	float DistanceToChamber(const FVector& WorldPoint) const;
@@ -336,6 +367,25 @@ public:
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Chamber|Size", meta = (ClampMin = 4, ClampMax = 30, Units = "cm"))
 	float BaseHeight = 10.f;
+
+	/** Thickness of the lid over the glass (cm at scale 1). */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Chamber|Size", meta = (ClampMin = 1, ClampMax = 20, Units = "cm"))
+	float LidHeight = 6.f;
+
+	/** Thickness of the frame's corner posts (cm at scale 1). */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Chamber|Size", meta = (ClampMin = 0.5, ClampMax = 10, Units = "cm"))
+	float PostThickness = 3.f;
+
+	/** A big (life-size) case keeps a slim plinth, lid and posts: at most this thick in the room (real cm; above the
+	 *  designed thicknesses at scale 1, so a case up to ~1.2x looks as designed). */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Chamber|Life Size", meta = (Units = "cm"))
+	float MaxBaseThickness = 12.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Chamber|Life Size", meta = (Units = "cm"))
+	float MaxLidThickness = 7.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Chamber|Life Size", meta = (Units = "cm"))
+	float MaxPostThickness = 4.f;
 
 	/** Allowed uniform scale of the whole exhibit (min, max). */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Chamber|Size")
@@ -483,6 +533,9 @@ private:
 	FLinearColor GetDesiredLightColor() const;
 	void ApplyLightColor();
 	void RefreshInfoText();
+	void GetProportionsFor(float Scale, float& OutBase, float& OutLid, float& OutPost) const;
+	FString LifeSizeNote;
+	float LifeSizeNoteScale = 0.f;
 	void UpdateVisualState();
 	void UpdateHandleVisuals();
 	void RefreshSizeLabel();

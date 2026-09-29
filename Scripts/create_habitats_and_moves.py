@@ -12,7 +12,9 @@ Run it after import_downloaded_models.py (that script resets the model aliens' d
   3. gives every model and classic alien its habitat, signature moves, effect colour and extras
      (Heatblast's head flames, XLR8's speed trail and top speed, Cannonbolt's ball),
   4. keeps the classic Heatblast and the classic Stinkfly out of the model collection (the
-     downloaded Stinkfly replaces the classic one; Heatblast was taken out of the museum).
+     downloaded models of them are in it),
+  5. gives every alien its real height (LIFE) and its own case (CASE_ROOM, measured from its model):
+     the museum shows them life size, as far as the room allows.
 
 Moves follow what the aliens do in Ben 10 (Cartoon Network): Cannonbolt rolls into a ball, XLR8 runs
 at super speed, Heatblast is on fire, Four Arms shows off his strength, Diamondhead grows crystals,
@@ -220,6 +222,68 @@ MOVES = {
 }
 
 
+# Life size: each alien's real height in the show (cm). From the VS Battles "Ben 10 height chart" (classic series)
+# and the Ben 10 Wiki; Echo Echo, Benmummy, Eye Guy and Buzzshock have no published figure - judged from the show.
+LIFE = {
+    "FourArms": 267, "Heatblast": 190, "Wildmutt": 137, "Diamondhead": 200, "XLR8": 147, "GreyMatter": 13,
+    "Stinkfly": 165, "Ripjaws": 206, "Upgrade": 198, "Ghostfreak": 178, "Cannonbolt": 188,
+    "Wildvine": 110,  # 7 ft standing - his model sprawls, tendrils out, so this is that pose's height
+    "Benwolf": 213, "Upchuck": 61, "Ditto": 115, "Benvicktor": 221,
+    "EchoEcho": 95, "Benmummy": 200, "EyeGuy": 200, "Buzzshock": 35,  # estimates
+}
+
+# Its own case: the room around it as multiples of its height (depth, width, glass height) - never tighter than its
+# own footprint needs. A tall case is kept snug so it still fits under a ceiling at life size; flyers get headroom,
+# dashers and rollers room to run, four-legged pouncers length, the tiny ones room to scurry.
+CASE_ROOM = {
+    "default": (0.85, 1.05, 1.08),
+    "Stinkfly": (1.1, 1.5, 1.5),      # flies
+    "Heatblast": (0.85, 1.05, 1.24),  # his head is on fire
+    "Ghostfreak": (0.9, 1.1, 1.3),    # hovers
+    "XLR8": (1.0, 1.7, 1.08),         # dashes
+    "Cannonbolt": (1.3, 1.7, 1.1),    # rolls
+    "Wildmutt": (1.4, 1.2, 1.15),     # on all fours, pounces
+    "Benwolf": (1.2, 1.6, 1.08),      # pounces; his howl spreads his arms wide
+    "Ripjaws": (1.1, 1.3, 1.08),
+    "Upchuck": (1.2, 1.4, 1.2),
+    "Ditto": (1.1, 1.4, 1.15),
+    "EchoEcho": (1.1, 1.4, 1.15),
+    "GreyMatter": (2.0, 2.6, 1.8),    # scurries about, 13 cm tall
+    "Buzzshock": (1.6, 2.0, 1.4),     # zips about
+}
+
+
+def case_size(da, key):
+    """Its own case (inside, cm at its museum height): CASE_ROOM, widened to clear its model (wings included)."""
+    mesh = da.get_editor_property("model_mesh")
+    height = da.get_editor_property("height")
+    if not mesh or height <= 0.0:
+        return None
+    box = mesh.get_bounding_box()
+    scale = height / max(box.max.z - box.min.z, 0.001)  # the game scales the model to its height
+    # Room to turn round with its arms out: the game gives it a capsule 90% as wide as its body reaches (6-30 cm) and
+    # a case at least that wide plus a margin (AAlienCharacter::GetCapsuleSize, AAlienChamber::GetMinInnerSizeFor).
+    reach = max(box.max.x - box.min.x, box.max.y - box.min.y) * scale / 2.0
+    turn = 2.0 * (min(30.0, max(6.0, 0.9 * reach)) + 3.0) + 6.0
+    lo, hi = box.min, box.max
+    # Its wings, and a pose it strikes (Four Arms' flex: same scale, feet on the ground), need room too.
+    extra = [p.get_editor_property("mesh") for p in da.get_editor_property("model_parts")] + [da.get_editor_property("pose_mesh")]
+    top = height
+    for other in [m for m in extra if m]:
+        other_box = other.get_bounding_box()
+        lo = unreal.Vector(min(lo.x, other_box.min.x), min(lo.y, other_box.min.y), lo.z)
+        hi = unreal.Vector(max(hi.x, other_box.max.x), max(hi.y, other_box.max.y), hi.z)
+        top = max(top, (other_box.max.z - other_box.min.z) * scale)
+    length, span = (hi.x - lo.x) * scale, (hi.y - lo.y) * scale
+    room = CASE_ROOM.get(key, CASE_ROOM["default"])
+    # Beyond turning round, a few steps each way: 12% of its height front to back, 20% side to side (about the walking
+    # room the old one-size case gave). Above its head, room to hop (the game's minimum is its height + 8).
+    depth = max(room[0] * height, length * 1.15 + 6.0, turn + 0.24 * height)
+    width = max(room[1] * height, span * 1.15 + 6.0, turn + 0.4 * height)
+    glass = max(room[2] * height + 3.0, top * 1.03 + 3.0, height + 8.0)
+    return unreal.Vector(*(min(250.0, max(30.0, v)) for v in (depth, width, glass)))
+
+
 def build_habitat(name, spec):
     title, ground, ground_rgb, glow_rgb, depth, ambient, ambient_rgb, ambient_count, props = spec
     asset = models.load_or_create(HABITAT_FOLDER, f"HAB_{name}", unreal.ChamberHabitatAsset)
@@ -268,6 +332,7 @@ def apply_moves(da, habitats, poses, ball_mesh):
             da.set_editor_property(prop_name, extras[prop_name])
     da.set_editor_property("vine_color", color(extras.get("vine_color", (0.12, 0.45, 0.08))))
     da.set_editor_property("vine_seed_pod", extras.get("vine_seed_pod", True))
+    da.set_editor_property("life_height", float(LIFE.get(key, 0.0)))
     posed = poses.get(da.get_name().replace("DA_Model_", ""), {})
     if "pose" in posed:
         da.set_editor_property("pose_mesh", posed["pose"][0])
@@ -278,8 +343,11 @@ def apply_moves(da, habitats, poses, ball_mesh):
             da.set_editor_property("height", float(height))
     if key == "Cannonbolt" and ball_mesh:
         da.set_editor_property("ball_mesh", ball_mesh)  # rolls up into the Wii model's ball
+    size = case_size(da, key)
+    da.set_editor_property("case_size", size if size else unreal.Vector(0.0, 0.0, 0.0))
     EAL.save_loaded_asset(da)
-    print("MOVES", da.get_name(), key, habitat, [str(m) for m in moves])
+    print("MOVES", da.get_name(), key, habitat, [str(m) for m in moves],
+          f"life {LIFE.get(key, 0)} cm" + (f", case {size.x:.0f} x {size.y:.0f} x {size.z:.0f}" if size else ""))
     return True
 
 

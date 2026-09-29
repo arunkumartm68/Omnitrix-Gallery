@@ -49,6 +49,9 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Museum|Persistence")
 	bool AreAnchorsAvailable() const;
 
+	/** The save file was written before cases had life size (its cases are made life size once, when restored). */
+	bool IsSaveFromBeforeLifeSize();
+
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Museum|Persistence")
 	FString SaveSlotName = TEXT("AlienMuseum");
 
@@ -63,6 +66,7 @@ public:
 private:
 	UMuseumSaveGame* GetSave();
 	void WriteSave();
+	int32 LoadedVersion = -1; // the save file's version as it was loaded (-1: not loaded yet)
 	FMuseumChamberRecord* FindRecord(const FGuid& ChamberId);
 	FMuseumChamberRecord& FindOrAddRecord(const FGuid& ChamberId);
 

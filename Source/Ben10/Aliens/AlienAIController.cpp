@@ -192,7 +192,8 @@ void AAlienAIController::Think()
 	// ---- Notice the player walking up ----
 	FVector Head;
 	const bool bHasHead = GetPlayerHead(Head);
-	const float NoticeDistance = (Data ? Data->NoticePlayerDistance : 160.f) * FMath::Max(1.f, Scale);
+	// A bigger alien notices you from further off - a life-size one across its case, not across the house.
+	const float NoticeDistance = (Data ? Data->NoticePlayerDistance : 160.f) * FMath::Clamp(Scale, 1.f, 2.f);
 	const bool bPlayerNear = bHasHead && FVector::Dist(Head, Alien->GetActorLocation()) < NoticeDistance;
 
 	// ---- A move plays out by itself ----

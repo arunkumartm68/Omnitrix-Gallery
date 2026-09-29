@@ -14,6 +14,15 @@
 
 class AMRUKAnchor;
 class AMRUKRoom;
+
+/** An upright box of the real room (a piece of furniture): a case must stay clear of it. */
+struct FMuseumRoomBox
+{
+	FVector Center = FVector::ZeroVector;
+	FVector2D Half = FVector2D::ZeroVector; // axis-aligned
+	float Bottom = 0.f;
+	float Top = 0.f;
+};
 class UMaterialInterface;
 class UProceduralMeshComponent;
 
@@ -52,6 +61,16 @@ public:
 	/** World Z of the floor (MRUK floor anchor, or FallbackFloorZ). */
 	UFUNCTION(BlueprintPure, Category = "Museum|Scene")
 	float GetFloorZ() const;
+
+	/** World Z of the ceiling (MRUK ceiling, or FallbackFloorZ + FallbackCeilingHeight; very high if there is none). */
+	UFUNCTION(BlueprintPure, Category = "Museum|Scene")
+	float GetCeilingZ() const;
+
+	/** The room's furniture as upright boxes: MRUK volumes (tables, couches, beds...), or the editor room's props. */
+	void GetFurnitureBoxes(TArray<FMuseumRoomBox>& Out) const;
+
+	/** True if every point is inside the scanned room's walls (always true without a scanned room). */
+	bool ArePointsInRoom(const TArray<FVector>& Points) const;
 
 	UFUNCTION(BlueprintPure, Category = "Museum|Scene")
 	bool IsUsingDeviceScene() const { return bUsingDeviceScene; }
@@ -98,6 +117,14 @@ public:
 	/** Editor / no-headset fallback floor height. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Museum|Placement")
 	float FallbackFloorZ = 0.f;
+
+	/** Editor / no-headset ceiling, above FallbackFloorZ (a typical room; 0 = no ceiling): big cases fit under it. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Museum|Placement", meta = (Units = "cm"))
+	float FallbackCeilingHeight = 270.f;
+
+	/** Editor / no-headset furniture: level actors with this tag (the floor slab among them is left out). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Museum|Placement")
+	FName EditorFurnitureTag = TEXT("MuseumEditorRoom");
 
 protected:
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;

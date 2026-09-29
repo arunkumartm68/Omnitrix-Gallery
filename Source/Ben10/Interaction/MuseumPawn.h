@@ -250,6 +250,10 @@ protected:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Museum")
 	TObjectPtr<UStaticMeshComponent> PlacementGhost;
 
+	/** Over the ghost of a new alien's case: how big it will be ("LIFE SIZE", "78% OF LIFE SIZE"). */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Museum")
+	TObjectPtr<class UTextRenderComponent> PlacementLabel;
+
 private:
 	struct FHandGrab
 	{

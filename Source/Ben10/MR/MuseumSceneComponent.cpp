@@ -6,6 +6,7 @@
 #include "Engine/GameInstance.h"
 #include "Engine/World.h"
 #include "HeadMountedDisplayFunctionLibrary.h"
+#include "Kismet/GameplayStatics.h"
 #include "Materials/MaterialInterface.h"
 #include "ProceduralMeshComponent.h"
 #include "MRUtilityKit.h"
@@ -336,6 +337,94 @@ float UMuseumSceneComponent::GetFloorZ() const
 		}
 	}
 	return FallbackFloorZ;
+}
+
+float UMuseumSceneComponent::GetCeilingZ() const
+{
+	if (UMRUKSubsystem* MRUK = bUsingDeviceScene ? GetMRUK() : nullptr)
+	{
+		if (AMRUKRoom* Room = MRUK->GetCurrentRoom())
+		{
+			if (Room->CeilingAnchors.Num() > 0 && Room->CeilingAnchors[0])
+			{
+				return Room->CeilingAnchors[0]->GetActorLocation().Z;
+			}
+		}
+	}
+	return FallbackCeilingHeight > 0.f ? FallbackFloorZ + FallbackCeilingHeight : 1.0e6f;
+}
+
+void UMuseumSceneComponent::GetFurnitureBoxes(TArray<FMuseumRoomBox>& Out) const
+{
+	Out.Reset();
+	auto AddBox = [&Out](const FBox& Box)
+	{
+		FMuseumRoomBox Item;
+		Item.Center = Box.GetCenter();
+		Item.Half = FVector2D(Box.GetExtent().X, Box.GetExtent().Y);
+		Item.Bottom = static_cast<float>(Box.Min.Z);
+		Item.Top = static_cast<float>(Box.Max.Z);
+		Out.Add(Item);
+	};
+
+	// A scanned room: every anchor with a volume is furniture (its world box around the volume's corners).
+	if (UMRUKSubsystem* MRUK = bUsingDeviceScene ? GetMRUK() : nullptr)
+	{
+		if (AMRUKRoom* Room = MRUK->GetCurrentRoom())
+		{
+			for (const AMRUKAnchor* Anchor : Room->AllAnchors)
+			{
+				if (!Anchor || !Anchor->VolumeBounds.IsValid)
+				{
+					continue;
+				}
+				const FTransform& T = Anchor->GetActorTransform();
+				const FBox& Local = Anchor->VolumeBounds;
+				FBox World(ForceInit);
+				for (int32 Corner = 0; Corner < 8; ++Corner)
+				{
+					World += T.TransformPosition(FVector(Corner & 1 ? Local.Max.X : Local.Min.X,
+						Corner & 2 ? Local.Max.Y : Local.Min.Y, Corner & 4 ? Local.Max.Z : Local.Min.Z));
+				}
+				AddBox(World);
+			}
+			return;
+		}
+	}
+
+	// Editor: the level's stand-in furniture (the floor slab is not furniture).
+	if (!EditorFurnitureTag.IsNone())
+	{
+		TArray<AActor*> Actors;
+		UGameplayStatics::GetAllActorsWithTag(this, EditorFurnitureTag, Actors);
+		for (const AActor* Actor : Actors)
+		{
+			FVector Origin, Extent;
+			Actor->GetActorBounds(true, Origin, Extent);
+			if (Origin.Z + Extent.Z > FallbackFloorZ + 2.f)
+			{
+				AddBox(FBox(Origin - Extent, Origin + Extent));
+			}
+		}
+	}
+}
+
+bool UMuseumSceneComponent::ArePointsInRoom(const TArray<FVector>& Points) const
+{
+	if (UMRUKSubsystem* MRUK = bUsingDeviceScene ? GetMRUK() : nullptr)
+	{
+		if (AMRUKRoom* Room = MRUK->GetCurrentRoom())
+		{
+			for (const FVector& Point : Points)
+			{
+				if (!Room->IsPositionInRoom(Point, false))
+				{
+					return false;
+				}
+			}
+		}
+	}
+	return true;
 }
 
 // ---------------------------------------------------------------------------------------------

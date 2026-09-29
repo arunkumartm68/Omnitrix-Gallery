@@ -469,6 +469,25 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Identity")
 	TSoftObjectPtr<UTexture2D> OmnitrixSilhouette;
 
+	// ---------- Life size ----------
+
+	/**
+	 * Its real height in the show (cm; 0 = its museum height is its life size). Its case is scaled so it stands this
+	 * tall - smaller only where the room is too low or too tight (Scripts/create_habitats_and_moves.py: LIFE).
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Life Size", meta = (Units = "cm"))
+	float LifeHeight = 0.f;
+
+	/**
+	 * The inside of its own case at its museum height (cm: X depth, Y width, Z glass height; 0 = the default case):
+	 * room to walk, fly or roll. Life size scales it together with the alien (create_habitats_and_moves.py: CASE_ROOM).
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Life Size")
+	FVector CaseSize = FVector::ZeroVector;
+
+	/** How many times its museum height its real height is (1 when not known). */
+	float GetLifeScale() const { return LifeHeight > 0.f && Height > 0.f ? LifeHeight / Height : 1.f; }
+
 	// ---------- Spawning ----------
 
 	/** Character class to spawn. Leave empty to use the built-in placeholder alien (AAlienCharacter). */

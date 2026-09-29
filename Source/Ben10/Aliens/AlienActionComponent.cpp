@@ -2611,6 +2611,10 @@ void UAlienActionComponent::ShrinkCapsule(float WorldRadius)
 	// Keep the bottom on the ground.
 	Alien->SetActorLocation(Alien->GetActorLocation() - FVector(0.f, 0.f, (SavedCapsuleHalfHeight - Radius) * S), false, nullptr, ETeleportType::TeleportPhysics);
 	bCapsuleShrunk = true;
+	if (AAlienChamber* Case = GetChamber())
+	{
+		Case->RefreshContainment(); // a bouncing ball stops at the lid
+	}
 }
 
 void UAlienActionComponent::RestoreCapsule()
@@ -2631,8 +2635,20 @@ void UAlienActionComponent::RestoreCapsule()
 		Location.Y = Inside.Y;
 	}
 	Location.Z += (SavedCapsuleHalfHeight - Capsule->GetUnscaledCapsuleHalfHeight()) * S;
+	if (const AAlienChamber* Case = GetChamber())
+	{
+		// Uncurled in mid-bounce, the full body starts no higher than keeps its head under the lid (a wide alien's
+		// capsule is much taller than its ball) - and never below the ground.
+		const float BodyHeight = Alien->GetAlienData() ? Alien->GetAlienData()->Height : 2.f * SavedCapsuleHalfHeight;
+		const float Highest = Case->GetLidZ() - (BodyHeight + 1.f - SavedCapsuleHalfHeight) * S;
+		Location.Z = FMath::Max(FMath::Min(static_cast<float>(Location.Z), Highest), Case->GetFloorZ() + (SavedCapsuleHalfHeight + 1.f) * S);
+	}
 	Capsule->SetCapsuleSize(SavedCapsuleRadius, SavedCapsuleHalfHeight);
 	Alien->SetActorLocation(Location, false, nullptr, ETeleportType::TeleportPhysics);
+	if (AAlienChamber* Case = GetChamber())
+	{
+		Case->RefreshContainment(); // before its next move: a wide alien's full capsule reaches above the lid again
+	}
 }
 
 float UAlienActionComponent::RoomAround(const FVector& WorldPoint) const
@@ -2883,7 +2899,9 @@ void UAlienActionComponent::BuildFlames()
 	FlameRoot->SetRelativeLocation(TopOffset);
 	FlameRoot->RegisterComponent();
 
-	// Five soft glowing cones: a big outer flame, two side tongues, one leaning back and a bright core.
+	// A crown of thin, see-through tongues of fire leaning out from the top of his head, each flickering on its own,
+	// around two bright yellow cores - a cartoon fire. (One big cone around the head read as a lampshade once he
+	// stood life size.)
 	struct FFlameSpec
 	{
 		FVector Offset;   // height units
@@ -2892,13 +2910,18 @@ void UAlienActionComponent::BuildFlames()
 		FLinearColor Color;
 		float Opacity;
 	};
-	const FFlameSpec Specs[] = {
-		{ FVector(0.f, 0.f, 0.12f), FVector(0.f, 0.f, 1.f), FVector(0.20f, 0.20f, 0.36f), FLinearColor(1.f, 0.30f, 0.04f), 0.55f },
-		{ FVector(0.02f, 0.06f, 0.09f), FVector(0.f, 0.42f, 1.f), FVector(0.11f, 0.11f, 0.24f), FLinearColor(1.f, 0.50f, 0.08f), 0.65f },
-		{ FVector(0.02f, -0.06f, 0.09f), FVector(0.f, -0.42f, 1.f), FVector(0.11f, 0.11f, 0.24f), FLinearColor(1.f, 0.50f, 0.08f), 0.65f },
-		{ FVector(-0.05f, 0.f, 0.10f), FVector(-0.5f, 0.f, 1.f), FVector(0.13f, 0.13f, 0.26f), FLinearColor(1.f, 0.20f, 0.03f), 0.5f },
-		{ FVector(0.01f, 0.f, 0.08f), FVector(0.f, 0.f, 1.f), FVector(0.10f, 0.10f, 0.20f), FLinearColor(1.f, 0.85f, 0.40f), 0.8f },
-	};
+	TArray<FFlameSpec> Specs;
+	constexpr int32 Tongues = 7;
+	for (int32 i = 0; i < Tongues; ++i)
+	{
+		const float Angle = 2.f * PI * (i + Rng.FRandRange(-0.2f, 0.2f)) / Tongues;
+		const FVector Out(FMath::Cos(Angle), FMath::Sin(Angle), 0.f);
+		const float Width = Rng.FRandRange(0.055f, 0.08f);
+		Specs.Add({ Out * 0.05f + FVector(0.f, 0.f, 0.06f), Out * Rng.FRandRange(0.25f, 0.45f) + FVector::UpVector,
+			FVector(Width, Width, Rng.FRandRange(0.2f, 0.34f)), FLinearColor(1.f, Rng.FRandRange(0.22f, 0.5f), 0.04f), 0.5f });
+	}
+	Specs.Add({ FVector(0.01f, 0.015f, 0.06f), FVector(0.1f, 0.1f, 1.f), FVector(0.06f, 0.06f, 0.26f), FLinearColor(1.f, 0.8f, 0.3f), 0.65f });
+	Specs.Add({ FVector(-0.01f, -0.015f, 0.06f), FVector(-0.1f, -0.05f, 1.f), FVector(0.05f, 0.05f, 0.2f), FLinearColor(1.f, 0.92f, 0.55f), 0.7f });
 	const float H = Body->GetModelHeight(); // local units: the flames scale with the alien
 	for (const FFlameSpec& Spec : Specs)
 	{
@@ -2955,7 +2978,7 @@ void UAlienActionComponent::UpdateFlames(float Dt)
 		const float Noise = 0.55f * FMath::Sin(FlameTime * 11.f + P) + 0.3f * FMath::Sin(FlameTime * 23.f + P * 2.3f) + 0.15f * FMath::Sin(FlameTime * 37.f + P * 0.7f);
 		const FTransform& Base = FlameBase[i];
 		const FVector BaseScale = Base.GetScale3D();
-		const FVector Scale = BaseScale * FVector(1.f - 0.08f * Noise, 1.f - 0.08f * Noise, 1.f + 0.25f * Noise) * FlameBoost;
+		const FVector Scale = BaseScale * FVector(1.f - 0.1f * Noise, 1.f - 0.1f * Noise, 1.f + 0.4f * Noise) * FlameBoost;
 		const FQuat Wobble = FQuat(FVector::ForwardVector, 0.08f * FMath::Sin(FlameTime * 7.f + P)) * FQuat(FVector::RightVector, 0.08f * FMath::Sin(FlameTime * 5.3f + P * 1.7f));
 		const FQuat Rotation = Wobble * Base.GetRotation();
 		// Taller flames grow upwards from their base instead of sinking into the head.

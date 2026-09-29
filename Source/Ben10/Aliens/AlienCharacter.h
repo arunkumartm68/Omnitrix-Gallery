@@ -32,6 +32,17 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Alien")
 	void InitializeAlien(UAlienDataAsset* InData, AAlienChamber* InChamber);
 
+	/** Its capsule (radius, half height; cm at scale 1) for a body that reaches out CollisionRadius: wide enough to
+	 *  keep outstretched limbs inside the glass, and never wider than tall - a wide alien's is a ball. */
+	static FVector2D GetCapsuleSize(float CollisionRadius, float BodyHeight, bool bModel);
+
+	/** The capsule an alien with this data gets, before it is spawned: imported models only (zero otherwise). */
+	static FVector2D GetCapsuleSizeFor(const UAlienDataAsset* Data);
+
+	/** How far its capsule, as it is now, reaches above its body (cm at scale 1): a wide alien's ball of a capsule is
+	 *  taller than the alien, and its case's invisible walls and ceiling reach that much above the lid. */
+	float GetCapsuleOverhang() const;
+
 	UFUNCTION(BlueprintPure, Category = "Alien")
 	UAlienDataAsset* GetAlienData() const { return AlienData; }
 
@@ -176,6 +187,7 @@ private:
 	FVector ExamineLocation = FVector::ZeroVector;
 	FQuat ExamineRotation = FQuat::Identity;
 	float ExamineZoom = 1.f;
+	static constexpr float HeldHeight = 55.f; // cm: the most a picked-up alien stands in the hand
 	FTransform ReturnFrom = FTransform::Identity;
 	float ReturnTime = 0.f;
 	float ReturnDuration = 1.f;

@@ -132,11 +132,9 @@ void AAlienCharacter::InitializeAlien(UAlienDataAsset* InData, AAlienChamber* In
 	}
 	bAppearanceBuilt = true;
 
-	// Imported models can be wide (tails, spread arms): allow a bigger capsule so they stay inside the glass.
-	const float Radius = FMath::Clamp(CollisionRadius, 6.f, Appearance->IsModel() ? 30.f : 20.f);
-	const float HalfHeight = FMath::Max(Radius, ModelHeight * 0.5f);
-	GetCapsuleComponent()->SetCapsuleSize(Radius, HalfHeight);
-	CapsuleHalfHeightLocal = HalfHeight;
+	const FVector2D Capsule = GetCapsuleSize(CollisionRadius, ModelHeight, Appearance->IsModel());
+	GetCapsuleComponent()->SetCapsuleSize(Capsule.X, Capsule.Y);
+	CapsuleHalfHeightLocal = Capsule.Y;
 
 	// Contact shadow: a soft disc just above the floor, a bit wider than the feet area.
 	ContactShadowScale = FVector(ShadowRadius * 2.6f / 100.f, ShadowRadius * 2.6f / 100.f, 1.f);
@@ -152,6 +150,25 @@ void AAlienCharacter::InitializeAlien(UAlienDataAsset* InData, AAlienChamber* In
 
 	UE_LOG(LogAlienMuseum, Log, TEXT("Alien %s initialised (height %.0f cm, chamber %s)"),
 		*AlienData->AlienId.ToString(), ModelHeight, InChamber ? *InChamber->GetName() : TEXT("none"));
+}
+
+FVector2D AAlienCharacter::GetCapsuleSize(float CollisionRadius, float BodyHeight, bool bModel)
+{
+	// Imported models can be wide (tails, spread arms): allow a bigger capsule so they stay inside the glass.
+	const float Radius = FMath::Clamp(CollisionRadius, 6.f, bModel ? 30.f : 20.f);
+	return FVector2D(Radius, FMath::Max(Radius, BodyHeight * 0.5f));
+}
+
+FVector2D AAlienCharacter::GetCapsuleSizeFor(const UAlienDataAsset* Data)
+{
+	// A shape-built body only knows its size once built; an imported model's comes from its mesh.
+	const UStaticMesh* Mesh = Data && Data->HasModel() ? Data->ModelMesh.LoadSynchronous() : nullptr;
+	return Mesh ? GetCapsuleSize(UAlienAppearanceComponent::GetModelCollisionRadius(Data, Mesh), Data->Height, true) : FVector2D::ZeroVector;
+}
+
+float AAlienCharacter::GetCapsuleOverhang() const
+{
+	return AlienData ? FMath::Max(0.f, 2.f * GetCapsuleComponent()->GetUnscaledCapsuleHalfHeight() - AlienData->Height) : 0.f;
 }
 
 float AAlienCharacter::GetScaleFactor() const
@@ -469,7 +486,10 @@ void AAlienCharacter::UpdateExamine(float DeltaSeconds)
 	const float Alpha = 1.f - FMath::Exp(-16.f * DeltaSeconds);
 	SetActorLocationAndRotation(FMath::Lerp(GetActorLocation(), ExamineLocation, Alpha),
 		FQuat::Slerp(GetActorQuat(), ExamineRotation, Alpha), false, nullptr, ETeleportType::TeleportPhysics);
-	SetActorScale3D(FVector(FMath::Lerp(GetScaleFactor(), GetCaseScale() * ExamineZoom, Alpha)));
+	// In the hand it is a figure of itself: a life-size giant shrinks to at most HeldHeight (it grows back in its case).
+	const float Model = AlienData ? FMath::Max(1.f, AlienData->Height) : 40.f;
+	const float Held = FMath::Min(GetCaseScale(), HeldHeight / Model) * ExamineZoom;
+	SetActorScale3D(FVector(FMath::Lerp(GetScaleFactor(), Held, Alpha)));
 	// It looks back at the person holding it.
 	if (APlayerCameraManager* Camera = UGameplayStatics::GetPlayerCameraManager(this, 0))
 	{

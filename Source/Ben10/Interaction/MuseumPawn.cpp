@@ -16,6 +16,7 @@
 #include "Camera/CameraComponent.h"
 #include "Components/CapsuleComponent.h"
 #include "Components/StaticMeshComponent.h"
+#include "Components/TextRenderComponent.h"
 #include "EngineUtils.h"
 #include "EnhancedInputComponent.h"
 #include "EnhancedInputSubsystems.h"
@@ -94,6 +95,18 @@ AMuseumPawn::AMuseumPawn()
 	PlacementGhost->SetUsingAbsoluteRotation(true);
 	PlacementGhost->SetWorldScale3D(FVector(0.66f, 0.66f, 0.72f)); // default chamber size; matched to the chamber class while placing
 	PlacementGhost->SetTranslucentSortPriority(2);
+
+	PlacementLabel = CreateDefaultSubobject<UTextRenderComponent>(TEXT("PlacementLabel"));
+	PlacementLabel->SetupAttachment(RootComponent);
+	PlacementLabel->SetUsingAbsoluteLocation(true);
+	PlacementLabel->SetUsingAbsoluteRotation(true);
+	PlacementLabel->SetUsingAbsoluteScale(true);
+	PlacementLabel->SetHorizontalAlignment(EHTA_Center);
+	PlacementLabel->SetVerticalAlignment(EVRTA_TextBottom);
+	PlacementLabel->SetWorldSize(7.f);
+	PlacementLabel->SetTextRenderColor(FColor(170, 255, 190));
+	PlacementLabel->SetCastShadow(false);
+	PlacementLabel->SetVisibility(false);
 
 	LeftHand = CreateDefaultSubobject<UMuseumHandInteractor>(TEXT("LeftHand"));
 	RightHand = CreateDefaultSubobject<UMuseumHandInteractor>(TEXT("RightHand"));
@@ -1358,7 +1371,8 @@ void AMuseumPawn::UpdateGrabs(float DeltaSeconds)
 			const FVector R = RightHand->GetGrabLocation();
 			const FVector Between = R - L;
 			const float Distance = FMath::Max(5.f, static_cast<float>(Between.Size()));
-			const float Scale = FMath::Clamp(TwoHandStartScale * Distance / TwoHandStartDistance, Chamber->ScaleRange.X, Chamber->ScaleRange.Y);
+			const FVector2D Limits = Chamber->GetScaleLimits(); // the usual range, stretched up to its alien's life size
+			const float Scale = FMath::Clamp(TwoHandStartScale * Distance / TwoHandStartDistance, Limits.X, Limits.Y);
 			const float Yaw = Between.Rotation().Yaw;
 			const FVector Target = (L + R) * 0.5f + FRotator(0.f, Yaw, 0.f).RotateVector(TwoHandOffset * (Scale / TwoHandStartScale));
 			Chamber->UpdateGrab(Target, TwoHandChamberStartYaw + (Yaw - TwoHandStartYaw), Scale);
@@ -1389,7 +1403,8 @@ void AMuseumPawn::UpdateGrabs(float DeltaSeconds)
 		}
 		if (FMath::Abs(AdjustInput.Y) > 0.2f)
 		{
-			Grab.TargetScale = FMath::Clamp(Grab.TargetScale * (1.f + AdjustInput.Y * ScaleSpeed * DeltaSeconds), Chamber->ScaleRange.X, Chamber->ScaleRange.Y);
+			const FVector2D Limits = Chamber->GetScaleLimits();
+			Grab.TargetScale = FMath::Clamp(Grab.TargetScale * (1.f + AdjustInput.Y * ScaleSpeed * DeltaSeconds), Limits.X, Limits.Y);
 			Grab.bMoved = true;
 		}
 
@@ -1518,15 +1533,38 @@ void AMuseumPawn::UpdatePlacement(float DeltaSeconds)
 	// The new chamber will face the viewer.
 	const float Yaw = (GetHeadLocation() - PlacementLocation).Rotation().Yaw;
 	bPlacementSpotOk = bPlacementInAir || PlacementHit.IsPlaceable();
+
+	// A new case for an alien is its own case, as big as the alien really is if the room allows it here.
+	FVector GhostSize = CaseSize;
+	bool bFits = true;
+	FString LabelText;
+	if (Mode == EMuseumPawnMode::PlacingAlien && PendingAlien && Template && bShowGhost)
+	{
+		FVector Inner;
+		float Scale = 1.f;
+		FString Why;
+		bFits = Director->FitLifeSize(PendingAlien, PlacementLocation, Yaw, nullptr, Inner, Scale, &Why);
+		GhostSize = Template->GetOuterSizeAt(Inner, Scale);
+		if (PendingAlien->LifeHeight > 0.f)
+		{
+			const float Percent = 100.f * Scale / PendingAlien->GetLifeScale();
+			LabelText = PendingAlien->DisplayName.ToString().ToUpper() + TEXT("\n")
+				+ (!bFits ? FString(TEXT("NO ROOM HERE"))
+					: Percent >= 99.5f ? FString::Printf(TEXT("LIFE SIZE  %.2f m"), PendingAlien->LifeHeight / 100.f)
+					: FString::Printf(TEXT("%.0f%% OF LIFE SIZE"), Percent));
+		}
+	}
 	bPlacementValid = bPlacementSpotOk
+		&& bFits
 		&& Director->CanAddChamber()
-		&& Director->IsFootprintFree(PlacementLocation, Yaw, CaseSize + FVector(4.f, 4.f, 0.f), nullptr);
+		&& Director->IsFootprintFree(PlacementLocation, Yaw, GhostSize + FVector(4.f, 4.f, 0.f), nullptr);
 
 	const FLinearColor Color = bPlacementValid ? ValidColor : InvalidColor;
 	Hand->SetLaserOverride(LaserEnd, bShowGhost ? Color : InvalidColor);
 	if (!bShowGhost)
 	{
 		PlacementGhost->SetVisibility(false);
+		PlacementLabel->SetVisibility(false);
 		return;
 	}
 
@@ -1537,8 +1575,17 @@ void AMuseumPawn::UpdatePlacement(float DeltaSeconds)
 		PlacementGhost->SetStaticMesh(GhostMesh);
 	}
 	PlacementGhost->SetVisibility(true);
-	PlacementGhost->SetWorldScale3D(CaseSize / 100.f);
-	PlacementGhost->SetWorldLocationAndRotation(PlacementLocation + FVector(0.f, 0.f, Height * 0.5f), FRotator(0.f, Yaw, 0.f));
+	PlacementGhost->SetWorldScale3D(GhostSize / 100.f);
+	PlacementGhost->SetWorldLocationAndRotation(PlacementLocation + FVector(0.f, 0.f, GhostSize.Z * 0.5f), FRotator(0.f, Yaw, 0.f));
+	PlacementLabel->SetVisibility(!LabelText.IsEmpty());
+	if (!LabelText.IsEmpty())
+	{
+		// Over the ghost, turned to the viewer (text faces its +X).
+		const FVector Top = PlacementLocation + FVector(0.f, 0.f, GhostSize.Z + 8.f);
+		PlacementLabel->SetText(FText::FromString(LabelText));
+		PlacementLabel->SetTextRenderColor(bPlacementValid ? FColor(170, 255, 190) : FColor(255, 140, 120));
+		PlacementLabel->SetWorldLocationAndRotation(Top, FRotator(0.f, (GetHeadLocation() - Top).Rotation().Yaw, 0.f));
+	}
 	if (GhostMID)
 	{
 		GhostMID->SetVectorParameterValue(MuseumAssets::Params::Color, Color);
@@ -1590,10 +1637,14 @@ void AMuseumPawn::ConfirmPlacement()
 			Audio->PlayAt(TEXT("Alien.Materialize"), PlacementLocation + FVector(0.f, 0.f, 50.f));
 		}
 	}
+	const bool bPlacedAlien = Mode == EMuseumPawnMode::PlacingAlien;
 	SetMode(EMuseumPawnMode::Default);
-	Director->SetStatusText(bPlacementInAir
-		? TEXT("Chamber floating in the air. Grab it to move, use two hands to resize.")
-		: TEXT("Chamber placed. Grab it to move, use two hands to resize."));
+	if (!bPlacedAlien) // for an alien the director has said how big it came out
+	{
+		Director->SetStatusText(bPlacementInAir
+			? TEXT("Chamber floating in the air. Grab it to move, use two hands to resize.")
+			: TEXT("Chamber placed. Grab it to move, use two hands to resize."));
+	}
 }
 
 AMuseumPawn::FHandTap& AMuseumPawn::GetTap(const UMuseumHandInteractor* Hand)

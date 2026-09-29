@@ -255,8 +255,9 @@ void AMuseumDirector::PreloadAlienAssets()
 
 void AMuseumDirector::RestoreMuseum()
 {
+	const bool bMakeLifeSize = Persistence->IsSaveFromBeforeLifeSize();
 	Persistence->RestoreMuseum(ChamberClass,
-		[this](AAlienChamber* Chamber, FName AlienId)
+		[this, bMakeLifeSize](AAlienChamber* Chamber, FName AlienId)
 		{
 			RegisterChamber(Chamber);
 			Chamber->NotifyPlaced();
@@ -271,11 +272,19 @@ void AMuseumDirector::RestoreMuseum()
 			}
 			TWeakObjectPtr<AAlienChamber> WeakChamber(Chamber);
 			FTimerHandle SpawnTimer;
-			GetWorldTimerManager().SetTimer(SpawnTimer, FTimerDelegate::CreateWeakLambda(this, [this, WeakChamber, Alien]()
+			GetWorldTimerManager().SetTimer(SpawnTimer, FTimerDelegate::CreateWeakLambda(this, [this, WeakChamber, Alien, bMakeLifeSize]()
 			{
 				AAlienChamber* Restored = WeakChamber.Get();
 				if (Restored && !Restored->GetOccupantData())
 				{
+					if (bMakeLifeSize)
+					{
+						MakeLifeSize(Restored, Alien); // saved before life size: its alien becomes as big as it really is
+					}
+					else
+					{
+						Restored->SetProportionsForScale(Restored->GetChamberScale());
+					}
 					Restored->SpawnAlien(Alien);
 					UpdateFloatingState(Restored);
 				}
@@ -354,6 +363,7 @@ AAlienChamber* AMuseumDirector::SpawnChamberAt(const FVector& FloorLocation, flo
 
 	if (Alien)
 	{
+		MakeLifeSize(Chamber, Alien);
 		Chamber->SpawnAlien(Alien);
 	}
 	RegisterChamber(Chamber);
@@ -370,12 +380,15 @@ void AMuseumDirector::PlaceAlienInChamber(AAlienChamber* Chamber, UAlienDataAsse
 	{
 		return;
 	}
+	// Out goes the old alien (its size must not hold the case open), the case becomes the new one's, in it comes.
+	SetStatusText(FString::Printf(TEXT("%s moved into its chamber."), *Alien->DisplayName.ToString()));
+	Chamber->RemoveAlien();
+	MakeLifeSize(Chamber, Alien);
 	Chamber->SpawnAlien(Alien); // OnOccupantChanged saves the museum
 	if (Panel)
 	{
 		Panel->SetSelectedAlien(nullptr);
 	}
-	SetStatusText(FString::Printf(TEXT("%s moved into its chamber."), *Alien->DisplayName.ToString()));
 }
 
 void AMuseumDirector::RemoveChamber(AAlienChamber* Chamber)
@@ -524,6 +537,138 @@ bool AMuseumDirector::IsFootprintFree(const FVector& FloorLocation, float Yaw, c
 const AAlienChamber* AMuseumDirector::GetChamberTemplate() const
 {
 	return ChamberClass ? ChamberClass->GetDefaultObject<AAlienChamber>() : GetDefault<AAlienChamber>();
+}
+
+// ---------------------------------------------------------------------------------------------
+// Life size: each alien in its own case, as big as it really is - as far as the room allows
+// ---------------------------------------------------------------------------------------------
+
+bool AMuseumDirector::FitLifeSize(const UAlienDataAsset* Alien, const FVector& FloorLocation, float Yaw, const AAlienChamber* Ignore,
+	FVector& OutInnerSize, float& OutScale, FString* OutWhy) const
+{
+	const AAlienChamber* Case = Ignore ? Ignore : GetChamberTemplate();
+	if (!Alien || !Case || !Scene)
+	{
+		return false;
+	}
+	// Its own case (room to walk, fly, roll) - never less than the room it needs to turn round in, which the case would
+	// grow to when it moves in - within what the resize handles allow.
+	const FVector Designed = Alien->CaseSize.IsNearlyZero() ? GetChamberTemplate()->GetInnerSize() : Alien->CaseSize;
+	const FVector Wanted = Designed.ComponentMax(AAlienChamber::GetMinInnerSizeFor(Alien));
+	OutInnerSize = FVector(FMath::Clamp(Wanted.X, Case->SizeRange.X, Case->SizeRange.Y),
+		FMath::Clamp(Wanted.Y, Case->SizeRange.X, Case->SizeRange.Y), FMath::Clamp(Wanted.Z, Case->SizeRange.X, Case->SizeRange.Y));
+	const float Target = FMath::Max(Case->ScaleRange.X, Alien->GetLifeScale());
+
+	TArray<FMuseumRoomBox> Furniture;
+	Scene->GetFurnitureBoxes(Furniture);
+	const float Ceiling = Scene->GetCeilingZ();
+	enum class EBlock : uint8 { None, Ceiling, Walls, Furniture, Cases };
+	auto Check = [&](float Scale)
+	{
+		const FVector Outer = Case->GetOuterSizeAt(OutInnerSize, Scale);
+		if (FloorLocation.Z + Outer.Z > Ceiling - 3.f)
+		{
+			return EBlock::Ceiling;
+		}
+		// Standing on something (the floor, a table top), it only has to clear what is above that.
+		const FFootprint Box = MakeFootprint(FloorLocation + FVector(0.f, 0.f, 1.f), Yaw, FVector2D(Outer.X, Outer.Y) * 0.5, static_cast<float>(Outer.Z));
+		TArray<FVector> Corners;
+		for (int32 i = 0; i < 4; ++i)
+		{
+			const FVector2D Corner = Box.Center + Box.AxisX * (Box.Half.X * (i & 1 ? 1.0 : -1.0)) + Box.AxisY * (Box.Half.Y * (i & 2 ? 1.0 : -1.0));
+			Corners.Add(FVector(Corner.X, Corner.Y, FloorLocation.Z + 20.f));
+		}
+		if (!Scene->ArePointsInRoom(Corners))
+		{
+			return EBlock::Walls;
+		}
+		for (const FMuseumRoomBox& Item : Furniture)
+		{
+			FFootprint Thing;
+			Thing.Center = FVector2D(Item.Center.X, Item.Center.Y);
+			Thing.Half = Item.Half;
+			Thing.Bottom = Item.Bottom;
+			Thing.Top = Item.Top;
+			if (FootprintsOverlap(Box, Thing))
+			{
+				return EBlock::Furniture;
+			}
+		}
+		if (!IsFootprintFree(FloorLocation, Yaw, Outer + FVector(4.f, 4.f, 0.f), Ignore))
+		{
+			return EBlock::Cases;
+		}
+		return EBlock::None;
+	};
+
+	auto Describe = [](EBlock Block)
+	{
+		return Block == EBlock::Ceiling ? TEXT("the ceiling is too low")
+			: Block == EBlock::Walls ? TEXT("the walls are too close")
+			: Block == EBlock::Furniture ? TEXT("furniture is in the way")
+			: Block == EBlock::Cases ? TEXT("another case is in the way")
+			: TEXT("");
+	};
+	const EBlock AtLifeSize = Check(Target);
+	if (AtLifeSize == EBlock::None)
+	{
+		OutScale = Target;
+		if (OutWhy)
+		{
+			OutWhy->Reset();
+		}
+		return true;
+	}
+	// The biggest that fits (the smallest a case gets is ScaleRange.X).
+	float Low = Case->ScaleRange.X;
+	float High = Target;
+	if (Check(Low) != EBlock::None)
+	{
+		OutScale = Low;
+		if (OutWhy)
+		{
+			*OutWhy = Describe(Check(Low));
+		}
+		return false;
+	}
+	for (int32 Step = 0; Step < 12; ++Step)
+	{
+		const float Mid = 0.5f * (Low + High);
+		(Check(Mid) == EBlock::None ? Low : High) = Mid;
+	}
+	OutScale = Low;
+	if (OutWhy)
+	{
+		*OutWhy = Describe(Check(High)); // what stops it growing any bigger
+	}
+	return true;
+}
+
+void AMuseumDirector::MakeLifeSize(AAlienChamber* Chamber, const UAlienDataAsset* Alien)
+{
+	if (!Chamber || !Alien || Alien->LifeHeight <= 0.f)
+	{
+		return; // no real height known: the case stays as it is
+	}
+	FVector Inner;
+	float Scale = 1.f;
+	FString Why;
+	if (!FitLifeSize(Alien, Chamber->GetActorLocation(), Chamber->GetActorRotation().Yaw, Chamber, Inner, Scale, &Why))
+	{
+		UE_LOG(LogAlienMuseum, Log, TEXT("%s: no room here for %s's own case, it keeps its size"), *Chamber->GetName(), *Alien->AlienId.ToString());
+		return;
+	}
+	Chamber->SetProportionsForScale(Scale);
+	Chamber->SetChamberScale(Scale);
+	Chamber->SetInnerSize(Inner);
+	Chamber->SetLifeSizeNote(Why);
+	const float Percent = 100.f * Scale / Alien->GetLifeScale();
+	UE_LOG(LogAlienMuseum, Log, TEXT("%s: %s at %.0f%% of life size (%.0f cm tall, case %.0f x %.0f x %.0f cm)%s%s"), *Chamber->GetName(),
+		*Alien->AlienId.ToString(), Percent, Alien->Height * Scale, Chamber->GetOuterSize().X, Chamber->GetOuterSize().Y,
+		Chamber->GetOuterSize().Z, Why.IsEmpty() ? TEXT("") : TEXT(" - "), *Why);
+	SetStatusText(Percent >= 99.5f
+		? FString::Printf(TEXT("%s at life size. Grab the case to move it; two hands zoom."), *Alien->DisplayName.ToString())
+		: FString::Printf(TEXT("%s at %.0f%% of life size - %s."), *Alien->DisplayName.ToString(), Percent, *Why));
 }
 
 TArray<AAlienChamber*> AMuseumDirector::GetChambers() const

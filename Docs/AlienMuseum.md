@@ -4,6 +4,7 @@ Mixed-reality alien museum for **Meta Quest 3S** (UE 5.7.4, Epic Native OpenXR +
 The player sees their real room through passthrough, places tall glass display cases on the floor, on
 furniture or floating in mid-air, resizes them with handles, and fills them with autonomous aliens chosen
 from a holographic collection - imported 3D models (the downloaded Ben 10 aliens) or shape-built figures.
+Each alien stands life size in a case made for it, as far as the room allows.
 
 ## Architecture
 
@@ -18,7 +19,8 @@ UAlienDataAsset (DA_Model_*, DA_Classic_*, DA_Alien_*)   identity, look, behavio
 
 AAlienChamber (BP_AlienChamber)                   Shape: Box (tall display case, default) or Round (pod)
    ├─ Base, FloorGlow, Glass, TopCap, LightPanel, FramePillars (1 instanced draw call)
-   ├─ ContainmentWalls (4 boxes / 8 round) + Ceiling   thick, block the alien and loose props, never the pointer
+   ├─ ContainmentWalls (4 boxes / 8 round) + Ceiling   thick, block the alien and loose props, never the pointer;
+   │                                                  reach above the lid for a wide alien's capsule
    ├─ UChamberHabitatComponent                     the occupant's home world (UChamberHabitatAsset)
    ├─ ObstacleRock / ObstacleCrystal               optional (off by default: big model aliens need the room)
    ├─ MovementBounds, SpawnPoint, SelectBox
@@ -30,8 +32,9 @@ AAlienChamber (BP_AlienChamber)                   Shape: Box (tall display case,
    ├─ glass effects (pooled: ripple rings where it is tapped or hit, marks such as a smear or breath)
    └─ spatial anchor component (added at runtime by UMuseumPersistenceComponent)
 
-AMuseumDirector (BP_MuseumDirector, one per level)
-   ├─ UMuseumSceneComponent        passthrough, scene permission, MRUK room, surface raycasts, occluders
+AMuseumDirector (BP_MuseumDirector, one per level)   places cases, fits each alien's case into the room life size
+   ├─ UMuseumSceneComponent        passthrough, scene permission, MRUK room (ceiling, walls, furniture),
+   │                               surface raycasts, occluders
    └─ UMuseumPersistenceComponent  save game + Meta spatial anchors
 AMuseumPawn (BP_MuseumPawn)       camera, controllers, 2 × UMuseumHandInteractor (controller / hand / desktop),
                                   knocks on the glass (fingertip or controller tip)
@@ -80,7 +83,7 @@ level's editor-only furniture (tag `MuseumEditorRoom`) stands in for your room.
 | Left mouse | select UI / place / click a chamber (info panel) / hold on a chamber to carry it |
 | Right mouse | grab / carry a chamber |
 | Z / C | rotate carried chamber |
-| Q / E | shrink / grow carried chamber; while placing a new chamber in the air: closer / farther |
+| Q / E | shrink / grow carried chamber (0.4× up to 2×, or up to life size); while placing a new chamber in the air: closer / farther |
 | Left mouse on a resize handle | drag to change the case's height / width / depth (look to move it) |
 | Right mouse on an alien (gold ring at its feet) | take it out of its case and hold it; Z / C spin it, Q / E zoom out / in; let go over its case = back in, anywhere else = it floats home |
 | Hold left mouse on an alien | the same (a quick click shows its case's info panel) |
@@ -193,6 +196,64 @@ you look at is always lit from the front. Turn it off with `BP_MuseumDirector` �
 **Glass.** `M_MuseumGlass` is an unlit translucent material (cheap on Quest): almost clear face-on,
 brighter and more reflective towards the edges (Fresnel), a soft sky reflection and a small moving
 highlight, tinted with the occupant's chamber colour.
+
+## Life size
+
+Every alien stands at its real height from the show, in a case made for it - as far as the room allows.
+
+* **Real heights** – `LifeHeight` on each data asset (cm), set from `LIFE` in `Scripts/create_habitats_and_moves.py`:
+  the VS Battles "Ben 10 height chart" (classic series) and the Ben 10 Wiki. Echo Echo, Benmummy, Eye Guy and
+  Buzzshock have no published height and are judged from the show (*). Wildvine's model sprawls low, so he is
+  1.10 m here (standing he is about 2.1 m).
+* **Its own case** – `CaseSize` (the inside, cm at museum size) is measured from the model by `case_size()` in the
+  same script: room to turn round with its arms out (the capsule the game gives it), a few steps each way (12% of
+  its height front to back, 20% side to side), its wings and the poses it strikes (Four Arms' flex, Benwolf's
+  howl) and headroom (Heatblast's fire, flying, hovering); `CASE_ROOM` gives the flyers, rollers, dashers and
+  pouncers more. Rerun the script after changing a model. The game never gives a case less than its alien
+  needs to turn round in (`AAlienChamber::GetMinInnerSizeFor`), so nothing grows once the alien is in.
+* **Fitting it into your room** – placing a case (and loading a museum saved before life size) runs
+  `AMuseumDirector::FitLifeSize`: the biggest size up to life size at which the case stays under the ceiling
+  (the MRUK ceiling; in the editor `FallbackCeilingHeight`, 270 cm above the floor), inside the walls, clear of
+  the furniture (MRUK volumes; in the editor the actors tagged `MuseumEditorRoom`) and of the other cases. The
+  placing ghost reads **LIFE SIZE 1.90 m** or **82% OF LIFE SIZE** (green), **NO ROOM HERE** (red); the info
+  panel reads *Real height 2.67 m - shown at 82% (the ceiling is too low)* - or the walls, the furniture or
+  another case.
+* **Zoom** – two hands (Q / E on the desktop) resize a case just as before, from 0.4× to 2×, and past that up to
+  life size (never through the ceiling). The size label says how much of life size it is.
+* **Big cases stay slim** – at life size the plinth (12 cm), lid (7 cm) and posts (4 cm) keep real thicknesses
+  instead of growing with the case (`SetProportionsForScale`); at museum size they look as they always did.
+* **Wide aliens** – a capsule is never wider than tall, so a wide alien (Cannonbolt, Wildvine) has a ball for a
+  capsule, taller than the alien itself. The case only has to fit the alien: its invisible walls and ceiling reach
+  above the lid by the difference (`AAlienChamber::RefreshContainment`). Curled into his ball, Cannonbolt stops at
+  the lid, and he never uncurls with his head through it.
+* **In your hand** – an alien taken out of its case is at most 55 cm tall (`AAlienCharacter::HeldHeight`).
+* **Saves** – a museum saved before life size is refitted once when it loads (`UMuseumSaveGame::LifeSizeVersion`);
+  later saves keep the sizes you gave the cases.
+
+In a room with a 2.7 m ceiling (the editor's):
+
+| Alien | Real height | Shown | Case (depth × width × height) |
+|---|---|---|---|
+| Four Arms | 2.67 m | 82% (needs a 3.2 m ceiling) | 2.51 × 2.86 × 2.67 m |
+| Benvicktor | 2.21 m | life size | 2.44 × 2.80 × 2.67 m |
+| Benwolf | 2.13 m | life size | 3.35 × 3.69 × 2.62 m |
+| Ripjaws | 2.06 m | life size | 2.49 × 2.90 × 2.55 m |
+| Diamondhead (1), (2) | 2.00 m | life size | 2.13 × 2.45 × 2.46 m |
+| Benmummy | 2.00 m * | life size | 2.42 × 2.74 × 2.46 m |
+| Eye Guy | 2.00 m * | life size | 2.45 × 2.77 × 2.46 m |
+| Upgrade | 1.98 m | life size | 2.53 × 2.85 × 2.47 m |
+| Heatblast | 1.90 m | life size | 2.10 × 2.40 × 2.65 m |
+| Cannonbolt | 1.88 m | life size | 4.24 × 4.54 × 2.51 m |
+| Ghostfreak | 1.78 m | life size | 2.12 × 2.40 × 2.60 m |
+| Stinkfly | 1.65 m | 94% | 2.94 × 2.93 × 2.67 m |
+| XLR8 (1), (2) | 1.47 m | life size | 1.90 (2.01) × 2.66 × 1.87 m |
+| Wildmutt | 1.37 m | life size | 2.25 × 2.47 × 1.87 m |
+| Ditto | 1.15 m | life size | 1.45 × 1.79 × 1.60 m |
+| Wildvine | 1.10 m (sprawled) | life size | 2.77 × 2.94 × 1.58 m |
+| Echo Echo | 0.95 m * | life size | 1.37 × 1.53 × 1.36 m |
+| Upchuck | 0.61 m | life size | 1.00 × 1.10 × 0.97 m |
+| Buzzshock | 0.35 m * | life size | 0.64 × 0.78 × 0.72 m |
+| Grey Matter | 0.13 m | life size | 0.30 × 0.38 × 0.36 m |
 
 ## Habitats (each alien's home world)
 
@@ -374,6 +435,8 @@ and FM tones. Random seeds are fixed, so the same files come out every run.
 * **Classic aliens** – shape-built versions generated by `Scripts/create_classic_aliens.py`
   (`DA_AlienCollection_Classic`). The museum now uses the downloaded models (`DA_AlienCollection_Models`);
   switch collections with `BP_MuseumDirector` → Collection (`DA_AlienCollection` = original placeholders).
+* **Life size** – `LifeHeight` (its real height, cm; 0 = not shown life size) and `CaseSize` (its case's inside at
+  museum size) on each data asset; see *Life size*.
 * **Model aliens** – `Data/Models/DA_Model_*`: `ModelMesh` (the imported static mesh), `ModelRotation`
   (fix-up if a model does not face +X), `ModelCredit` (shown on the info panel), `Height`, `Hovers`,
   behaviour and chamber colour. A model is scaled to `Height`, stood on its lowest point and centred.
@@ -552,5 +615,13 @@ Resonance renders all sources into one third-order ambisonic mix decoded once fo
   A saved case that held one of them comes back empty.
 * Heatblast, Benmummy, Benvicktor, Buzzshock and Eye Guy have no voices or footsteps of their own (their
   moves still play the shared move sounds).
-* In a small case a wide alien (e.g. Cannonbolt, 50 cm across) has little room to roll or leap - make
-  the case bigger with the handles.
+* Life size is big: most cases are 2-2.5 m across and Cannonbolt's is 4.5 m, so in an ordinary room most
+  aliens come out smaller than life size (the info panel says why) - zoom cases down to fit more of them.
+  A case made smaller (by the room or the handles) leaves a wide alien like Cannonbolt little room to roll or
+  leap.
+* Four real heights are estimates (Echo Echo, Benmummy, Eye Guy, Buzzshock), and Wildvine's is his sprawled
+  pose.
+* A life-size case can fill your view with layers of see-through glass, which costs GPU time on the Quest -
+  watch the frame rate on the headset.
+* The editor's saved desktop layout predates life size: refitted, the cases that stand against the table or
+  the couch come out small.

@@ -40,8 +40,12 @@ class BEN10_API UMuseumSaveGame : public USaveGame
 	GENERATED_BODY()
 
 public:
+	/** 1: before life size; 2 (LifeSizeVersion): cases hold their aliens at life size. The default stays 1, so a file
+	 *  that never stored a version reads as an old one. */
 	UPROPERTY(SaveGame, BlueprintReadOnly, Category = "Museum")
 	int32 Version = 1;
+
+	static constexpr int32 LifeSizeVersion = 2;
 
 	UPROPERTY(SaveGame, BlueprintReadOnly, Category = "Museum")
 	TArray<FMuseumChamberRecord> Chambers;

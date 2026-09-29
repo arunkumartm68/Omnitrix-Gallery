@@ -70,6 +70,9 @@ public:
 	/** Radius for the collision capsule at scale 1 (cm). */
 	float GetCollisionRadius() const { return CollisionRadius; }
 
+	/** The collision radius an imported model gets (cm at scale 1), without building it. */
+	static float GetModelCollisionRadius(const UAlienDataAsset* Data, const UStaticMesh* Mesh);
+
 	/** Radius of the fake contact shadow at scale 1 (cm): the feet area, not outstretched arms. */
 	float GetShadowRadius() const { return ShadowRadius; }
 
