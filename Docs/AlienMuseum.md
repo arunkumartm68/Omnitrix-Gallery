@@ -225,10 +225,17 @@ Every alien stands at its real height from the show, in a case made for it - as 
   howl) and headroom (Heatblast's fire, flying, hovering); `CASE_ROOM` gives the flyers, rollers, dashers and
   pouncers more. Rerun the script after changing a model. The game never gives a case less than its alien
   needs to turn round in (`AAlienChamber::GetMinInnerSizeFor`), so nothing grows once the alien is in.
+* **Where it stands** – a new alien's case stands where you point, never in mid-air (under a ceiling a floating
+  case can't be life size): on the floor you point at, on a table top you point at, at the foot of a wall or piece
+  of furniture you point at, or on the floor under the end of the ray in open space. If walls, furniture or other
+  cases would make it smaller there, it slides into the free space - towards you, sideways, or (pointing at open
+  floor) further out - to where it is biggest (`AMuseumDirector::FindLifeSizeSpot`), always in front of you and
+  never over where you stand. An empty case can still float, and any case can be lifted into the air by carrying
+  it; a floating one never goes past the wall you point at.
 * **Fitting it into your room** – placing a case (and loading a museum saved before life size) runs
   `AMuseumDirector::FitLifeSize`: the biggest size up to life size at which the case stays under the ceiling
   (the MRUK ceiling; in the editor `FallbackCeilingHeight`, 270 cm above the floor), inside the walls, clear of
-  the furniture (MRUK volumes; in the editor the actors tagged `MuseumEditorRoom`) and of the other cases. The
+  the furniture (MRUK volumes; in the editor the actors tagged `MuseumEditorRoom`), of the other cases and of you. The
   placing ghost reads **LIFE SIZE 1.90 m** or **82% OF LIFE SIZE** (green), **NO ROOM HERE** (red); the info
   panel reads *Real height 2.67 m - shown at 82% (the ceiling is too low)* - or the walls, the furniture or
   another case.

@@ -449,6 +449,20 @@ private:
 
 	FMuseumSurfaceHit PlacementHit;
 	FVector PlacementLocation = FVector::ZeroVector; // bottom centre of the new chamber
+
+	/** The last spot found for a new alien's case: searched again when the aim moves, the alien changes or it ages. */
+	struct FSpotCache
+	{
+		TWeakObjectPtr<UAlienDataAsset> Alien;
+		FVector Aim = FVector::ZeroVector;
+		double Time = -10.0;
+		bool bFits = false;
+		FVector Location = FVector::ZeroVector;
+		float Yaw = 0.f;
+		FVector Inner = FVector::ZeroVector;
+		float Scale = 1.f;
+	};
+	FSpotCache SpotCache;
 	bool bPlacementInAir = false;
 	bool bPlacementSpotOk = false;                  // a surface or open air (ignores other chambers)
 	bool bPlacementValid = false;

@@ -88,6 +88,16 @@ public:
 	bool FitLifeSize(const UAlienDataAsset* Alien, const FVector& FloorLocation, float Yaw, const AAlienChamber* Ignore,
 		FVector& OutInnerSize, float& OutScale, FString* OutWhy = nullptr) const;
 
+	/**
+	 * Where near Aim (a point on the floor, or on a table top when bOnTable) a new case for Alien should stand: Aim
+	 * itself if it can be life size there, else slid up to about a case's width towards the viewer, sideways or (unless
+	 * bAtFoot: Aim is at the foot of a wall or piece of furniture it must stay in front of) away from them - clear of
+	 * walls, furniture and other cases - to where it comes out biggest. It faces the viewer, never covers where they
+	 * stand and never goes round behind them; on a table it stays where it was put. False when it fits nowhere near.
+	 */
+	bool FindLifeSizeSpot(const UAlienDataAsset* Alien, const FVector& Aim, bool bOnTable, bool bAtFoot, FVector& OutLocation,
+		float& OutYaw, FVector& OutInnerSize, float& OutScale, FString* OutWhy = nullptr) const;
+
 	/** Gives Chamber the case Alien should have, life size where the room allows it (before the alien moves in). */
 	void MakeLifeSize(AAlienChamber* Chamber, const UAlienDataAsset* Alien);
 

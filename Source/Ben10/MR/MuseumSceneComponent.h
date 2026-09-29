@@ -54,6 +54,13 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Museum|Scene")
 	FMuseumSurfaceHit RaycastSurface(const FVector& Origin, const FVector& Direction, float MaxDistance = 600.f) const;
 
+	/**
+	 * Casts a ray against everything in the room - walls, furniture sides, the ceiling - not only the surfaces a case
+	 * can stand on (RaycastSurface passes through walls).
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Museum|Scene")
+	FMuseumSurfaceHit RaycastRoom(const FVector& Origin, const FVector& Direction, float MaxDistance = 600.f) const;
+
 	/** Finds the surface directly below a point (used to settle a chamber that was put down). */
 	UFUNCTION(BlueprintCallable, Category = "Museum|Scene")
 	FMuseumSurfaceHit FindSurfaceBelow(const FVector& Location, float MaxDrop = 300.f) const;
@@ -147,6 +154,7 @@ private:
 	void BuildOccluders();
 	void ClearOccluders();
 	EMuseumSurfaceType ClassifyLabels(const TArray<FString>& Labels) const;
+	FMuseumSurfaceHit Raycast(const FVector& Origin, const FVector& Direction, float MaxDistance, bool bOnlyPlaceable) const;
 	class UMRUKSubsystem* GetMRUK() const;
 
 	UPROPERTY(Transient)

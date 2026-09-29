@@ -258,6 +258,16 @@ EMuseumSurfaceType UMuseumSceneComponent::ClassifyLabels(const TArray<FString>& 
 
 FMuseumSurfaceHit UMuseumSceneComponent::RaycastSurface(const FVector& Origin, const FVector& Direction, float MaxDistance) const
 {
+	return Raycast(Origin, Direction, MaxDistance, true);
+}
+
+FMuseumSurfaceHit UMuseumSceneComponent::RaycastRoom(const FVector& Origin, const FVector& Direction, float MaxDistance) const
+{
+	return Raycast(Origin, Direction, MaxDistance, false);
+}
+
+FMuseumSurfaceHit UMuseumSceneComponent::Raycast(const FVector& Origin, const FVector& Direction, float MaxDistance, bool bOnlyPlaceable) const
+{
 	FMuseumSurfaceHit Result;
 	const FVector Dir = Direction.GetSafeNormal();
 	if (Dir.IsNearlyZero())
@@ -269,8 +279,11 @@ FMuseumSurfaceHit UMuseumSceneComponent::RaycastSurface(const FVector& Origin, c
 	UMRUKSubsystem* MRUK = bUsingDeviceScene ? GetMRUK() : nullptr;
 	if (MRUK && MRUK->GetCurrentRoom())
 	{
-		FMRUKLabelFilter Filter;
-		Filter.IncludedLabels = PlaceableLabels;
+		FMRUKLabelFilter Filter; // no labels: every anchor (walls, furniture, ceiling)
+		if (bOnlyPlaceable)
+		{
+			Filter.IncludedLabels = PlaceableLabels;
+		}
 		FMRUKHit Hit;
 		if (AMRUKAnchor* Anchor = MRUK->Raycast(Origin, Dir, MaxDistance, Filter, Hit))
 		{

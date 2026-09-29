@@ -1583,41 +1583,53 @@ void AMuseumPawn::UpdatePlacement(float DeltaSeconds)
 			FloatPlacementRange.X, FloatPlacementRange.Y);
 	}
 
-	PlacementHit = Director->GetScene()->RaycastSurface(Origin, Direction, 600.f);
+	UMuseumSceneComponent* Scene = Director->GetScene();
+	PlacementHit = Scene->RaycastSurface(Origin, Direction, 600.f);
 	bPlacementInAir = false;
 	bool bShowGhost = false;
 	FVector LaserEnd = Origin + Direction * 300.f;
-	if (PlacementHit.IsPlaceable() || (PlacementHit.bHit && !Director->bChambersFloat))
-	{
-		PlacementLocation = PlacementHit.Location;
-		LaserEnd = PlacementHit.Location;
-		bShowGhost = true;
-	}
-	else if (Director->bChambersFloat)
-	{
-		// The ray points at the middle of the floating chamber; it never goes below the floor.
-		LaserEnd = Origin + Direction * FloatPlacementDistance;
-		PlacementLocation = LaserEnd - FVector(0.f, 0.f, Height * 0.5f);
-		PlacementLocation.Z = FMath::Max(PlacementLocation.Z, Director->GetScene()->GetFloorZ());
-		bPlacementInAir = true;
-		bShowGhost = true;
-	}
-
-	// The new chamber will face the viewer.
-	const float Yaw = (GetHeadLocation() - PlacementLocation).Rotation().Yaw;
-	bPlacementSpotOk = bPlacementInAir || PlacementHit.IsPlaceable();
-
-	// A new case for an alien is its own case, as big as the alien really is if the room allows it here.
+	float Yaw = 0.f;
 	FVector GhostSize = CaseSize;
 	bool bFits = true;
 	FString LabelText;
-	if (Mode == EMuseumPawnMode::PlacingAlien && PendingAlien && Template && bShowGhost)
+	if (Mode == EMuseumPawnMode::PlacingAlien && PendingAlien && Template)
 	{
-		FVector Inner;
-		float Scale = 1.f;
-		FString Why;
-		bFits = Director->FitLifeSize(PendingAlien, PlacementLocation, Yaw, nullptr, Inner, Scale, &Why);
-		GhostSize = Template->GetOuterSizeAt(Inner, Scale);
+		// A new case for an alien is its own case, as big as the alien really is if the room allows it - so it stands
+		// where you point, on the floor (or on a table top you point at), never in mid-air: under a ceiling a floating
+		// case can't be life size. Pointing at a wall (or a piece of furniture's side) it stands at its foot; into open
+		// space, on the floor under the end of the ray. Walls, furniture or other cases in the way, it slides into
+		// the free space and faces you (FindLifeSizeSpot).
+		const FMuseumSurfaceHit RoomHit = Scene->RaycastRoom(Origin, Direction, 600.f);
+		const float FloorZ = Scene->GetFloorZ();
+		LaserEnd = RoomHit.bHit ? RoomHit.Location : Origin + Direction * FloatPlacementDistance;
+		const FVector Aim = RoomHit.IsPlaceable() ? RoomHit.Location : FVector(LaserEnd.X, LaserEnd.Y, FloorZ);
+		// The search tries up to 18 spots: while the hand holds still (and for a quarter second) the last answer stands.
+		const double Now = GetWorld()->GetTimeSeconds();
+		if (SpotCache.Alien.Get() != PendingAlien || FVector::DistSquared(SpotCache.Aim, Aim) > 4.0 || Now - SpotCache.Time > 0.25
+			|| DeltaSeconds <= 0.f) // asked right before placing: always fresh
+		{
+			SpotCache.bFits = Director->FindLifeSizeSpot(PendingAlien, Aim, Aim.Z > FloorZ + 10.f, RoomHit.bHit && !RoomHit.IsPlaceable(),
+				SpotCache.Location, SpotCache.Yaw, SpotCache.Inner, SpotCache.Scale);
+			SpotCache.Alien = PendingAlien;
+			SpotCache.Aim = Aim;
+			SpotCache.Time = Now;
+		}
+		bFits = SpotCache.bFits;
+		PlacementLocation = SpotCache.Location;
+		Yaw = SpotCache.Yaw;
+		const FVector Inner = SpotCache.Inner;
+		const float Scale = SpotCache.Scale;
+		if (bFits)
+		{
+			GhostSize = Template->GetOuterSizeAt(Inner, Scale);
+		}
+		else
+		{
+			PlacementLocation = Aim;
+			Yaw = (GetHeadLocation() - Aim).Rotation().Yaw;
+		}
+		bShowGhost = true;
+		bPlacementSpotOk = true;
 		if (PendingAlien->LifeHeight > 0.f)
 		{
 			const float Percent = 100.f * Scale / PendingAlien->GetLifeScale();
@@ -1626,6 +1638,35 @@ void AMuseumPawn::UpdatePlacement(float DeltaSeconds)
 					: Percent >= 99.5f ? FString::Printf(TEXT("LIFE SIZE  %.2f m"), PendingAlien->LifeHeight / 100.f)
 					: FString::Printf(TEXT("%.0f%% OF LIFE SIZE"), Percent));
 		}
+	}
+	else
+	{
+		// An empty case: on the surface under the ray, or with floating chambers in mid-air FloatPlacementDistance
+		// along it - but never past the wall it points at.
+		if (PlacementHit.IsPlaceable() || (PlacementHit.bHit && !Director->bChambersFloat))
+		{
+			PlacementLocation = PlacementHit.Location;
+			LaserEnd = PlacementHit.Location;
+			bShowGhost = true;
+		}
+		else if (Director->bChambersFloat)
+		{
+			float Reach = FloatPlacementDistance;
+			const FMuseumSurfaceHit Wall = Scene->RaycastRoom(Origin, Direction, FloatPlacementDistance + static_cast<float>(CaseSize.X));
+			if (Wall.bHit)
+			{
+				Reach = FMath::Min(Reach, FMath::Max(20.f, static_cast<float>(FVector::Dist(Origin, Wall.Location) - 0.5 * CaseSize.X) - 5.f));
+			}
+			// The ray points at the middle of the floating chamber; it never goes below the floor.
+			LaserEnd = Origin + Direction * Reach;
+			PlacementLocation = LaserEnd - FVector(0.f, 0.f, Height * 0.5f);
+			PlacementLocation.Z = FMath::Max(PlacementLocation.Z, Scene->GetFloorZ());
+			bPlacementInAir = true;
+			bShowGhost = true;
+		}
+		// The new chamber will face the viewer.
+		Yaw = (GetHeadLocation() - PlacementLocation).Rotation().Yaw;
+		bPlacementSpotOk = bPlacementInAir || PlacementHit.IsPlaceable();
 	}
 	bPlacementValid = bPlacementSpotOk
 		&& bFits
@@ -1695,6 +1736,7 @@ void AMuseumPawn::ConfirmPlacement()
 			Audio->PlayAt(TEXT("UI.Error"), Head + (PlacementLocation - Head).GetSafeNormal() * 40.f); // towards where you point
 		}
 		Director->SetStatusText(!Director->CanAddChamber() ? TEXT("The museum is full. Remove a chamber first.")
+			: Mode == EMuseumPawnMode::PlacingAlien ? TEXT("No room for its case here. Point at open floor.")
 			: bPlacementSpotOk ? TEXT("Too close to another chamber.")
 			: TEXT("Can't place there. Aim at free floor or a table top."));
 		return;

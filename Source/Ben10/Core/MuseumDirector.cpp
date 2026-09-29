@@ -562,7 +562,10 @@ bool AMuseumDirector::FitLifeSize(const UAlienDataAsset* Alien, const FVector& F
 	TArray<FMuseumRoomBox> Furniture;
 	Scene->GetFurnitureBoxes(Furniture);
 	const float Ceiling = Scene->GetCeilingZ();
-	enum class EBlock : uint8 { None, Ceiling, Walls, Furniture, Cases };
+	FVector Viewer;
+	FRotator ViewRotation;
+	const bool bHasViewer = GetViewer(Viewer, ViewRotation);
+	enum class EBlock : uint8 { None, Ceiling, Walls, Furniture, Cases, Viewer };
 	auto Check = [&](float Scale)
 	{
 		const FVector Outer = Case->GetOuterSizeAt(OutInnerSize, Scale);
@@ -572,6 +575,16 @@ bool AMuseumDirector::FitLifeSize(const UAlienDataAsset* Alien, const FVector& F
 		}
 		// Standing on something (the floor, a table top), it only has to clear what is above that.
 		const FFootprint Box = MakeFootprint(FloorLocation + FVector(0.f, 0.f, 1.f), Yaw, FVector2D(Outer.X, Outer.Y) * 0.5, static_cast<float>(Outer.Z));
+		// Never grown over where the viewer stands (with a little room to stand in).
+		if (bHasViewer)
+		{
+			const FVector2D ToViewer = FVector2D(Viewer.X, Viewer.Y) - Box.Center;
+			if (FMath::Abs(FVector2D::DotProduct(ToViewer, Box.AxisX)) < Box.Half.X + 25.0
+				&& FMath::Abs(FVector2D::DotProduct(ToViewer, Box.AxisY)) < Box.Half.Y + 25.0)
+			{
+				return EBlock::Viewer;
+			}
+		}
 		TArray<FVector> Corners;
 		for (int32 i = 0; i < 4; ++i)
 		{
@@ -607,6 +620,7 @@ bool AMuseumDirector::FitLifeSize(const UAlienDataAsset* Alien, const FVector& F
 			: Block == EBlock::Walls ? TEXT("the walls are too close")
 			: Block == EBlock::Furniture ? TEXT("furniture is in the way")
 			: Block == EBlock::Cases ? TEXT("another case is in the way")
+			: Block == EBlock::Viewer ? TEXT("you are standing there")
 			: TEXT("");
 	};
 	const EBlock AtLifeSize = Check(Target);
@@ -642,6 +656,85 @@ bool AMuseumDirector::FitLifeSize(const UAlienDataAsset* Alien, const FVector& F
 		*OutWhy = Describe(Check(High)); // what stops it growing any bigger
 	}
 	return true;
+}
+
+bool AMuseumDirector::FindLifeSizeSpot(const UAlienDataAsset* Alien, const FVector& Aim, bool bOnTable, bool bAtFoot,
+	FVector& OutLocation, float& OutYaw, FVector& OutInnerSize, float& OutScale, FString* OutWhy) const
+{
+	const AAlienChamber* Template = GetChamberTemplate();
+	if (!Alien || !Template)
+	{
+		return false;
+	}
+	FVector Viewer;
+	FRotator View;
+	if (!GetViewer(Viewer, View))
+	{
+		Viewer = Aim - FVector(150.f, 0.f, 0.f);
+	}
+	// Slide towards the viewer (away from the wall pointed at), away from them (pointed at their own feet) and sideways,
+	// in steps of a quarter of the life-size case's width, nearest spots first. The first spot where it is life size
+	// wins; else the biggest (a nearer spot keeps a tie).
+	FVector2D Toward(Viewer.X - Aim.X, Viewer.Y - Aim.Y);
+	if (!Toward.Normalize())
+	{
+		Toward = -FVector2D(View.Vector().X, View.Vector().Y).GetSafeNormal();
+	}
+	const FVector2D Side(-Toward.Y, Toward.X);
+	const float Target = FMath::Max(Template->ScaleRange.X, Alien->GetLifeScale());
+	const FVector LifeInner = (Alien->CaseSize.IsNearlyZero() ? Template->GetInnerSize() : Alien->CaseSize)
+		.ComponentMax(AAlienChamber::GetMinInnerSizeFor(Alien));
+	const FVector LifeOuter = Template->GetOuterSizeAt(LifeInner, Target);
+	const float Step = FMath::Clamp(0.25f * static_cast<float>(FVector2D(LifeOuter.X, LifeOuter.Y).Size()), 15.f, 60.f);
+	static const FIntPoint Offsets[] = {
+		{ 0, 0 }, { 1, 0 }, { -1, 0 }, { 0, 1 }, { 0, -1 }, { 1, 1 }, { 1, -1 }, { 2, 0 }, { -2, 0 }, { 2, 1 }, { 2, -1 },
+		{ 0, 2 }, { 0, -2 }, { 3, 0 }, { -3, 0 }, { 4, 0 }, { 5, 0 }, { 6, 0 } };
+
+	bool bFound = false;
+	for (const FIntPoint& Offset : Offsets)
+	{
+		if (bOnTable && Offset != FIntPoint::ZeroValue)
+		{
+			break; // put on a table top it stays where it was put (sliding would take it over the edge)
+		}
+		if (bAtFoot && Offset.X < 0)
+		{
+			continue; // pointed at a wall or a piece of furniture: it stays on the viewer's side of it
+		}
+		const FVector2D Spot = FVector2D(Aim.X, Aim.Y) + Toward * (Offset.X * Step) + Side * (Offset.Y * Step);
+		if (FVector2D::DotProduct(Spot - FVector2D(Viewer.X, Viewer.Y), Toward) > 0.0)
+		{
+			continue; // slid past the viewer: it stays on the side they pointed to, never behind them
+		}
+		const FVector Location(Spot.X, Spot.Y, Aim.Z);
+		const FVector2D ToViewer(Viewer.X - Spot.X, Viewer.Y - Spot.Y); // it faces the viewer
+		const float Yaw = ToViewer.IsNearlyZero() ? View.Yaw + 180.f
+			: static_cast<float>(FMath::RadiansToDegrees(FMath::Atan2(ToViewer.Y, ToViewer.X)));
+		FVector Inner;
+		float Scale = 0.f;
+		FString Why;
+		if (!FitLifeSize(Alien, Location, Yaw, nullptr, Inner, Scale, &Why))
+		{
+			continue;
+		}
+		if (!bFound || Scale > OutScale + 0.01f * Target)
+		{
+			bFound = true;
+			OutLocation = Location;
+			OutYaw = Yaw;
+			OutInnerSize = Inner;
+			OutScale = Scale;
+			if (OutWhy)
+			{
+				*OutWhy = Why;
+			}
+		}
+		if (Scale >= Target * 0.995f)
+		{
+			break; // life size here
+		}
+	}
+	return bFound;
 }
 
 void AMuseumDirector::MakeLifeSize(AAlienChamber* Chamber, const UAlienDataAsset* Alien)
