@@ -635,6 +635,13 @@ Resonance renders all sources into one third-order ambisonic mix decoded once fo
   leap.
 * Four real heights are estimates (Echo Echo, Benmummy, Eye Guy, Buzzshock), and Wildvine's is his sprawled
   pose.
+* With hand tracking, looking at your **right** palm and pinching is Quest's own Meta-button gesture: it opens
+  the Quest menu, and going Home from there closes the museum (it is not a crash - everything is saved). The
+  museum's menu is the **left** palm. To tell a real crash from this on the headset:
+  `adb shell dumpsys activity exit-info com.alienmuseum.ben10` - `EXIT_SELF` right after the system's
+  `NavigatorLibraryActivity` starts (logcat) is the Quest menu; a crash reads `CRASH_NATIVE`, a memory kill
+  `LOW_MEMORY`, a hang `ANR`. (Launching the app with adb while nobody wears the headset gives an ANR: it waits
+  for focus at frame 0.)
 * A life-size case can fill your view with layers of see-through glass, which costs GPU time on the Quest -
   watch the frame rate on the headset.
 * The editor's saved desktop layout predates life size: refitted, the cases that stand against the table or
