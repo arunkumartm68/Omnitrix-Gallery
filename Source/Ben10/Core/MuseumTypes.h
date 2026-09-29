@@ -40,6 +40,16 @@ struct BEN10_API FMuseumSurfaceHit
 	bool IsPlaceable() const { return bHit && Normal.Z > 0.7f && Surface != EMuseumSurfaceType::None; }
 };
 
+/** Where a case for an alien goes and how big it is, as AMuseumDirector::FitLifeSize works it out. */
+struct FMuseumCaseFit
+{
+	FVector Location = FVector::ZeroVector;  // bottom centre
+	FVector InnerSize = FVector::ZeroVector; // its own inside (cm at scale 1)
+	float Scale = 1.f;
+	FString Why;                             // what kept it smaller than life size ("the ceiling is too low")
+	bool bFits = false;                      // false: not even the museum's normal size fits there (it goes there anyway)
+};
+
 /** Collision settings shared by museum actors. */
 namespace MuseumCollision
 {

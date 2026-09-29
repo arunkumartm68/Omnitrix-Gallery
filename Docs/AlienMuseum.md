@@ -225,15 +225,15 @@ Every alien stands at its real height from the show, in a case made for it - as 
   howl) and headroom (Heatblast's fire, flying, hovering); `CASE_ROOM` gives the flyers, rollers, dashers and
   pouncers more. Rerun the script after changing a model. The game never gives a case less than its alien
   needs to turn round in (`AAlienChamber::GetMinInnerSizeFor`), so nothing grows once the alien is in.
-* **Where it stands** – a new alien's case stands where you point, never in mid-air (under a ceiling a floating
-  case can't be life size): on the floor you point at, on a table top you point at, at the foot of a wall or piece
-  of furniture you point at, or on the floor under the end of the ray in open space. If walls, furniture or other
-  cases would make it smaller there, it slides into the free space - towards you, sideways, or (pointing at open
-  floor) further out - to where it is biggest (`AMuseumDirector::FindLifeSizeSpot`), always in front of you and
-  never over where you stand. An empty case can still float, and any case can be lifted into the air by carrying
-  it; a floating one never goes past the wall you point at.
+* **Where it goes** – a new alien's case goes exactly where you point: on the floor or table top the ray lands on,
+  or else floating in mid-air at the end of the ray (1.2 m out - the thumbstick moves it nearer or further - and
+  always in front of a wall the ray meets), centred on that point: a big one grows up and down around it and moves
+  down just enough to stay under the ceiling. It is as big as the alien really is if there is room there - never
+  smaller than the museum's normal size, and never refused for lack of room (only another case in the way stops
+  it). Any case can be carried anywhere afterwards and floats where you let go.
 * **Fitting it into your room** – placing a case (and loading a museum saved before life size) runs
-  `AMuseumDirector::FitLifeSize`: the biggest size up to life size at which the case stays under the ceiling
+  `AMuseumDirector::FitLifeSize`: the biggest size up to life size (and at least the museum's normal size, scale 1 -
+  smaller is up to you, with the zoom) at which the case stays under the ceiling
   (the MRUK ceiling; in the editor `FallbackCeilingHeight`, 270 cm above the floor), inside the walls, clear of
   the furniture (MRUK volumes; in the editor the actors tagged `MuseumEditorRoom`), of the other cases and of you. The
   placing ghost reads **LIFE SIZE 1.90 m** or **82% OF LIFE SIZE** (green), **NO ROOM HERE** (red); the info

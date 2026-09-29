@@ -9,6 +9,7 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
+#include "Core/MuseumTypes.h"
 #include "MuseumDirector.generated.h"
 
 class AAlienChamber;
@@ -17,6 +18,7 @@ class ADirectionalLight;
 class UAlienCollectionAsset;
 struct FStreamableHandle;
 class UAlienDataAsset;
+
 class UMuseumSceneComponent;
 class UMuseumPersistenceComponent;
 
@@ -34,6 +36,9 @@ public:
 	/** Spawns a chamber whose bottom is at FloorLocation (a surface, or mid-air when chambers float). Optionally puts an alien inside. */
 	UFUNCTION(BlueprintCallable, Category = "Museum")
 	AAlienChamber* SpawnChamberAt(const FVector& FloorLocation, float Yaw, UAlienDataAsset* Alien = nullptr);
+
+	/** Spawns a case for Alien just as Fit says (its place, size and scale - what the placing ghost showed). */
+	AAlienChamber* SpawnFittedChamber(UAlienDataAsset* Alien, float Yaw, const FMuseumCaseFit& Fit);
 
 	UFUNCTION(BlueprintCallable, Category = "Museum")
 	void PlaceAlienInChamber(AAlienChamber* Chamber, UAlienDataAsset* Alien);
@@ -80,23 +85,18 @@ public:
 	const AAlienChamber* GetChamberTemplate() const;
 
 	/**
-	 * The case Alien should have at FloorLocation, facing Yaw: its own inside size (CaseSize) and the biggest scale up
-	 * to life size that fits there - under the ceiling, inside the walls, clear of furniture and of other cases
-	 * (Ignore: the case being refitted). OutWhy says what kept it smaller ("the ceiling is too low"). False when not
-	 * even the smallest case fits there.
+	 * The case Alien should have at Anchor, facing Yaw: its own inside size (CaseSize) and the biggest scale up to life
+	 * size that fits there - under the ceiling, above the floor, inside the walls, clear of furniture, of other cases
+	 * (Ignore: the case being refitted) and of the viewer; never smaller than the museum's normal size (scale 1, or its
+	 * life size if that is smaller). Anchor is its bottom centre, or with bCentered the middle of a case floating in
+	 * mid-air: it grows up and down around it (and stays between the floor and the ceiling). False when not even the
+	 * smallest size fits there - Out then holds that size, to put it there anyway.
 	 */
-	bool FitLifeSize(const UAlienDataAsset* Alien, const FVector& FloorLocation, float Yaw, const AAlienChamber* Ignore,
-		FVector& OutInnerSize, float& OutScale, FString* OutWhy = nullptr) const;
+	bool FitLifeSize(const UAlienDataAsset* Alien, const FVector& Anchor, bool bCentered, float Yaw, const AAlienChamber* Ignore,
+		FMuseumCaseFit& Out) const;
 
-	/**
-	 * Where near Aim (a point on the floor, or on a table top when bOnTable) a new case for Alien should stand: Aim
-	 * itself if it can be life size there, else slid up to about a case's width towards the viewer, sideways or (unless
-	 * bAtFoot: Aim is at the foot of a wall or piece of furniture it must stay in front of) away from them - clear of
-	 * walls, furniture and other cases - to where it comes out biggest. It faces the viewer, never covers where they
-	 * stand and never goes round behind them; on a table it stays where it was put. False when it fits nowhere near.
-	 */
-	bool FindLifeSizeSpot(const UAlienDataAsset* Alien, const FVector& Aim, bool bOnTable, bool bAtFoot, FVector& OutLocation,
-		float& OutYaw, FVector& OutInnerSize, float& OutScale, FString* OutWhy = nullptr) const;
+	/** Gives Chamber the size, scale and place Fit says (before its alien moves in), and says how big it came out. */
+	void ApplyCaseFit(AAlienChamber* Chamber, const UAlienDataAsset* Alien, const FMuseumCaseFit& Fit);
 
 	/** Gives Chamber the case Alien should have, life size where the room allows it (before the alien moves in). */
 	void MakeLifeSize(AAlienChamber* Chamber, const UAlienDataAsset* Alien);
@@ -204,6 +204,8 @@ private:
 	void PreloadAlienAssets();
 
 	void RegisterChamber(AAlienChamber* Chamber);
+	/** Spawns a chamber (with Alien in a case of Fit's size, or fitted where it stands when Fit is null). */
+	AAlienChamber* SpawnChamber(const FVector& FloorLocation, float Yaw, UAlienDataAsset* Alien, const FMuseumCaseFit* Fit);
 	void SpawnStarterChamber();
 	void PushOutOfOtherChambers(AAlienChamber* Chamber) const;
 	bool GetViewer(FVector& OutHead, FRotator& OutRotation) const;
