@@ -471,7 +471,9 @@ and FM tones. Random seeds are fixed, so the same files come out every run.
   by the player) the legs reach out and paddle. `Spine` breathes (pants when excited), `Neck` / `Head`
   look around and nod with the steps, `Jaw` pants and snarls, `bSniffs` lifts the nose to sniff now and
   then, `Tail` waves (`TailAmount`, `TailSpeed`), `Floating` bones drift. `StrideLength` / `StepHeight`
-  in model heights. Wildmutt walks on all fours this way and Ghostfreak's tail waves; the settings live
+  in model heights. With `bFrontLegsWalk` off the front legs are arms: they keep the model's own pose and ride
+  with the body, and only reach out to paw at something. Wildmutt walks on his hind legs this way, his front
+  arms as the downloaded model has them (spread wide, paws down), and Ghostfreak's tail waves; the settings live
   in `RIGS` in `Scripts/import_downloaded_models.py`. A rig with front legs can also stand up with its
   front paws on something (`SetFrontReach`: Wildmutt at the glass). Console `Museum.RigTestSpeed 14` makes rigged
   aliens step on the spot as if walking at 14 cm/s (for checking the gait; 0 = off).
@@ -636,6 +638,8 @@ Resonance renders all sources into one third-order ambisonic mix decoded once fo
   A saved case that held one of them comes back empty.
 * Heatblast, Benmummy, Benvicktor, Buzzshock and Eye Guy have no voices or footsteps of their own (their
   moves still play the shared move sounds).
+* Wildmutt keeps his front arms as the downloaded model has them - spread wide, 2.6 times his height across - so
+  his case is wide (4.2 m at life size) and in an ordinary room he shows near the museum's normal size.
 * Life size is big: most cases are 2-2.5 m across and Cannonbolt's is 4.5 m, so in an ordinary room most
   aliens come out smaller than life size (the info panel says why) - zoom cases down to fit more of them.
   A case made smaller (by the room or the handles) leaves a wide alien like Cannonbolt little room to roll or

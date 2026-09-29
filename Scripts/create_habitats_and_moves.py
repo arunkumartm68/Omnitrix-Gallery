@@ -261,10 +261,10 @@ def case_size(da, key):
         return None
     box = mesh.get_bounding_box()
     scale = height / max(box.max.z - box.min.z, 0.001)  # the game scales the model to its height
-    # Room to turn round with its arms out: the game gives it a capsule 90% as wide as its body reaches (6-30 cm) and
+    # Room to turn round with its arms out: the game gives it a capsule 90% as wide as its body reaches (6-60 cm) and
     # a case at least that wide plus a margin (AAlienCharacter::GetCapsuleSize, AAlienChamber::GetMinInnerSizeFor).
     reach = max(box.max.x - box.min.x, box.max.y - box.min.y) * scale / 2.0
-    turn = 2.0 * (min(30.0, max(6.0, 0.9 * reach)) + 3.0) + 6.0
+    turn = 2.0 * (min(60.0, max(6.0, 0.9 * reach)) + 3.0) + 6.0
     lo, hi = box.min, box.max
     # Its wings, and a pose it strikes (Four Arms' flex: same scale, feet on the ground), need room too.
     extra = [p.get_editor_property("mesh") for p in da.get_editor_property("model_parts")] + [da.get_editor_property("pose_mesh")]

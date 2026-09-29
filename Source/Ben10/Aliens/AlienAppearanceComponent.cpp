@@ -915,6 +915,13 @@ void UAlienAppearanceComponent::UpdateRig(float DeltaSeconds, float TurnAlpha, f
 	const float Duty = FMath::Lerp(0.66f, 0.45f, Run); // share of the cycle a paw is on the ground
 	for (const FRigLeg& Leg : RigLegs)
 	{
+		// Front legs that are arms (bFrontLegsWalk off) keep the model's own pose and ride with the body: only
+		// reaching out to paw at something moves them.
+		const bool bArm = Leg.bFront && !RigSettings.bFrontLegsWalk;
+		if (bArm && FrontReach <= 0.001f)
+		{
+			continue;
+		}
 		const float LegReach = Leg.UpperLength + Leg.LowerLength;
 		const float Stride = FMath::Min(FMath::Max(Speed / Frequency, 0.08f * H * TurnAlpha), 0.6f * LegReach);
 		const float P = FMath::Frac(GaitCycle + Leg.Phase);
@@ -935,7 +942,12 @@ void UAlienAppearanceComponent::UpdateRig(float DeltaSeconds, float TurnAlpha, f
 		FVector Target = Leg.Home + (Forward * Along + Up * Lift) * GaitMoving;
 		float Fold = Swing * GaitMoving;
 		float PawTurn = 0.f;
-		if (Airborne > 0.f)
+		if (bArm)
+		{
+			Target = RigSpace[Leg.End].GetLocation(); // where the arm is now, riding with the body: it reaches from there
+			Fold = 0.f;
+		}
+		else if (Airborne > 0.f)
 		{
 			// Leaping or held: front paws reach forward, hind legs stretch back - paddling when excited.
 			const float Paddle = FMath::Sin(2.f * PI * (Time * 0.8f + Leg.Phase)) * Excite;

@@ -154,8 +154,9 @@ void AAlienCharacter::InitializeAlien(UAlienDataAsset* InData, AAlienChamber* In
 
 FVector2D AAlienCharacter::GetCapsuleSize(float CollisionRadius, float BodyHeight, bool bModel)
 {
-	// Imported models can be wide (tails, spread arms): allow a bigger capsule so they stay inside the glass.
-	const float Radius = FMath::Clamp(CollisionRadius, 6.f, bModel ? 30.f : 20.f);
+	// Imported models can be wide (tails, spread arms - Wildmutt's reach out over half again his height): allow a
+	// bigger capsule so they stay inside the glass.
+	const float Radius = FMath::Clamp(CollisionRadius, 6.f, bModel ? 60.f : 20.f);
 	return FVector2D(Radius, FMath::Max(Radius, BodyHeight * 0.5f));
 }
 

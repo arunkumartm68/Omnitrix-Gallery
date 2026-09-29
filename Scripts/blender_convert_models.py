@@ -85,11 +85,11 @@ MODELS = {
                                                     pose={"LeftUpperArm": 30, "RightUpperArm": 30}),
     # On all fours: the front paws planted a little ahead of and outside the shoulders, elbows bent
     # back like a gorilla's, claws on the ground. The game walks him with IK from this stance.
-    "wildmutt": dict(id="Wildmutt", alien="Wildmutt", height=40, rotate=(0, 0, -90), rigged=True,
-                     colors={"Body": (0.9, 0.28, 0.03), "Body_1": (0.9, 0.28, 0.03)},  # the cartoon's orange, not yellow
-                     ik=[dict(bones=("bip_upperArm_L", "bip_lowerArm_L", "bip_hand_L"),
-                              target=(0.30, -0.22, 0.09), pole=(0.55, 0.55, 0.47), aim=(0.06, -0.95, -0.30),
-                              aim_bones={"bip_thumb_0_L": (-0.35, -0.85, -0.40)})]),  # thumb along the paw
+    # His front arms stay as the model has them (spread wide, paws down; the user's choice): bending them down to the
+    # ground put their claws below his hind feet, and he floated above the floor of his case.
+    # His arms reach out 2.6 times his height: max_span keeps him 40 cm tall (each case is made for its alien now).
+    "wildmutt": dict(id="Wildmutt", alien="Wildmutt", height=40, max_span=110.0, rotate=(0, 0, -90), rigged=True,
+                     colors={"Body": (0.9, 0.28, 0.03), "Body_1": (0.9, 0.28, 0.03)}),  # the cartoon's orange, not yellow
     # Ben 10: Protector of Earth (Wii) Cannonbolt: the standing figure and his rolled-up ball form.
     "cannonbolt-wii": dict(id="Cannonbolt_3", alien="Cannonbolt", height=50,
                            folder="ben-10-cannonbolt-and-ball", file="Model.obj"),
@@ -585,12 +585,12 @@ def remove_unused_bones(arm, body):
     print("  removed", removed, "unused bones,", len(arm.data.bones), "left")
 
 
-def normalize_rigged(arm, body, target_height_cm):
+def normalize_rigged(arm, body, target_height_cm, max_span=MAX_SPAN):
     """normalize() for a skinned mesh and its armature: the same move and scale on both, applied."""
     lo, hi = common.world_bounds([body])
     size = hi - lo
     span = max(size.x, size.y)
-    height_cm = min(target_height_cm, MAX_SPAN * size.z / span) if span > 0 else target_height_cm
+    height_cm = min(target_height_cm, max_span * size.z / span) if span > 0 else target_height_cm
     scale = (height_cm / 100.0) / size.z
     move = Matrix.Scale(scale, 4) @ Matrix.Translation(Vector((-(lo.x + hi.x) * 0.5, -(lo.y + hi.y) * 0.5, -lo.z)))
     for obj in (body, arm):
@@ -613,7 +613,7 @@ def finish_rigged(cfg, out_dir):
     body.name = body.data.name = cfg["id"] + "_Skin"
     triangles = decimate(body, cfg.get("max_triangles", MAX_TRIANGLES))
     remove_unused_bones(arm, body)
-    normalize_rigged(arm, body, cfg["height"])
+    normalize_rigged(arm, body, cfg["height"], cfg.get("max_span", MAX_SPAN))
     arm.name = cfg["id"] + "_Rig"
     body.parent = arm  # both transforms are identity now; glTF wants the skin under its armature
     body.modifiers.new("Armature", "ARMATURE").object = arm

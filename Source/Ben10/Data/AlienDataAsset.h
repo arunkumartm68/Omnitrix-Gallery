@@ -327,6 +327,13 @@ struct BEN10_API FAlienRig
 	/** Lifts its nose and sniffs the air now and then (Wildmutt has no eyes). */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rig")
 	bool bSniffs = false;
+
+	/**
+	 * It walks on its front legs too (a four-legged walk). Off: they are arms that keep the model's own pose and ride
+	 * with the body - only reaching out to paw at something moves them (Wildmutt's front arms as the model has them).
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Rig")
+	bool bFrontLegsWalk = true;
 };
 
 /**

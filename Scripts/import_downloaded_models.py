@@ -96,8 +96,9 @@ PART_MOTION = {
 # legs: (upper, lower, end, phase in the step cycle, front leg). A four-legged walk steps left hind,
 # left fore, right hind, right fore - a quarter of the cycle apart.
 RIGS = {
-    # Wildmutt walks on all fours like the classic cartoon: elbows bending, paws planted, the head low,
-    # sniffing the air (he has no eyes) and panting / snarling when excited.
+    # Wildmutt walks on his hind legs with his front arms as the model has them (spread, paws down): they ride with
+    # his body and only reach out to paw at the glass (front_legs_walk off). His head is low, he sniffs the air (he
+    # has no eyes) and pants / snarls when excited.
     "Wildmutt": dict(
         legs=[("bip_hip_L", "bip_knee_L", "bip_foot_L", 0.0, False),
               ("bip_upperArm_L", "bip_lowerArm_L", "bip_hand_L", 0.25, True),
@@ -105,7 +106,7 @@ RIGS = {
               ("bip_upperArm_R", "bip_lowerArm_R", "bip_hand_R", 0.75, True)],
         spine=["bip_pelvis", "bip_spine_0", "bip_spine_1", "bip_spine_2"],
         neck="bip_neck", head="bip_head", jaw="bip_Jaw",
-        stride_length=0.3, step_height=0.1, sniffs=True),
+        stride_length=0.3, step_height=0.1, sniffs=True, front_legs_walk=False),
     # Ghostfreak's ghostly tail waves all the time; his long arms drift.
     "Ghostfreak": dict(
         spine=["bip_pelvis", "bip_spine_0", "bip_spine_1"], neck="bip_neck", head="bip_head",
@@ -328,7 +329,7 @@ def make_rig(model_id):
         rig.set_editor_property(key, [unreal.Name(n) for n in spec.get(key, [])])
     for key in ("neck", "head", "jaw"):
         rig.set_editor_property(key, unreal.Name(spec.get(key, "None")))
-    for key in ("stride_length", "step_height", "tail_amount", "tail_speed", "sniffs"):
+    for key in ("stride_length", "step_height", "tail_amount", "tail_speed", "sniffs", "front_legs_walk"):
         if key in spec:
             rig.set_editor_property(key, spec[key])
     return rig
