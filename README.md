@@ -1,4 +1,6 @@
-# Alien Museum (Ben 10 fan project)
+# Omnitrix Gallery
+
+*An alien museum in mixed reality (Ben 10 fan project).*
 
 A mixed-reality alien museum for **Meta Quest 3S**, built with **Unreal Engine 5.7.4**.
 
@@ -47,7 +49,7 @@ Where the room allows, every alien stands **life size** in a case made just for 
 
 ```bash
 git lfs install
-git clone <this repo's URL>
+git clone https://github.com/arunkumartm68/Omnitrix-Gallery.git
 ```
 
 1. Right-click `Ben10.uproject` and choose **Generate Visual Studio project files**.
