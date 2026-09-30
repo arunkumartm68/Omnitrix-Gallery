@@ -59,6 +59,9 @@ git clone https://github.com/arunkumartm68/Omnitrix-Gallery.git
    ```
 3. Open `Ben10.uproject`, then open the `Content/AlienMuseum/Maps/L_AlienMuseum` level.
 
+Shortcut: skip steps 1-2 and just open `Ben10.uproject`. Unreal says the modules are missing and asks to rebuild
+them: click **Yes** and wait a few minutes. The first launch also takes a while as Unreal compiles shaders.
+
 ## How to use
 
 ### In the editor (no headset)
